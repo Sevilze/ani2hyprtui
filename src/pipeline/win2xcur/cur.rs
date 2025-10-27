@@ -132,8 +132,33 @@ fn create_bmp_from_dib(dib_data: &[u8]) -> Result<Vec<u8>> {
     }
     
     let header_size = u32::from_le_bytes([dib_data[0], dib_data[1], dib_data[2], dib_data[3]]);
-    let file_size = 14 + dib_data.len() as u32;
-    let pixel_data_offset = 14 + header_size + calculate_palette_size(dib_data)?;
+    
+    let width = i32::from_le_bytes([dib_data[4], dib_data[5], dib_data[6], dib_data[7]]);
+    let height = i32::from_le_bytes([dib_data[8], dib_data[9], dib_data[10], dib_data[11]]);
+    let actual_height = height / 2;
+    
+    let mut modified_dib = dib_data.to_vec();
+    let actual_height_bytes = actual_height.to_le_bytes();
+    modified_dib[8] = actual_height_bytes[0];
+    modified_dib[9] = actual_height_bytes[1];
+    modified_dib[10] = actual_height_bytes[2];
+    modified_dib[11] = actual_height_bytes[3];
+    
+    // Calculate how much data we need (only the XOR mask)
+    let palette_size = calculate_palette_size(&modified_dib)?;
+    let bits_per_pixel = u16::from_le_bytes([dib_data[14], dib_data[15]]);
+    
+    let row_size = ((width.abs() as u32 * bits_per_pixel as u32 + 31) / 32) * 4;
+    let xor_mask_size = row_size * actual_height.abs() as u32;
+    let dib_data_size = header_size + palette_size + xor_mask_size;
+    
+    // Truncate to only include XOR mask data
+    if modified_dib.len() > dib_data_size as usize {
+        modified_dib.truncate(dib_data_size as usize);
+    }
+    
+    let file_size = 14 + modified_dib.len() as u32;
+    let pixel_data_offset = 14 + header_size + palette_size;
     
     let mut bmp_data = Vec::new();
     
@@ -144,7 +169,7 @@ fn create_bmp_from_dib(dib_data: &[u8]) -> Result<Vec<u8>> {
     bmp_data.write_u16::<LittleEndian>(0)?;  // Reserved2
     bmp_data.write_u32::<LittleEndian>(pixel_data_offset)?;
     
-    bmp_data.write_all(dib_data)?;
+    bmp_data.write_all(&modified_dib)?;
     
     Ok(bmp_data)
 }

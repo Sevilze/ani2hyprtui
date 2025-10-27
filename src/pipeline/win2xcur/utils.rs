@@ -73,7 +73,7 @@ fn apply_shadow_to_image(image: &RgbaImage, config: &ShadowConfig) -> Result<Rgb
     let new_height = height + (3 * y_offset.abs() as u32);
     
     let mut alpha_mask = ImageBuffer::new(new_width, new_height);
-    for (x, y, pixel) in alpha_mask.enumerate_pixels_mut() {
+    for (_x, _y, pixel) in alpha_mask.enumerate_pixels_mut() {
         *pixel = Rgba([255, 255, 255, 0]);
     }
     
@@ -107,7 +107,7 @@ fn apply_shadow_to_image(image: &RgbaImage, config: &ShadowConfig) -> Result<Rgb
     }
     
     let mut result = ImageBuffer::new(new_width, new_height);
-    for (x, y, pixel) in result.enumerate_pixels_mut() {
+    for (_x, _y, pixel) in result.enumerate_pixels_mut() {
         *pixel = Rgba([0, 0, 0, 0]);
     }
     
@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn test_scale_frames() {
-        let mut img = RgbaImage::new(32, 32);
+        let img = RgbaImage::new(32, 32);
         let cursor = super::super::cur::CursorImage {
             image: img,
             hotspot: (16, 16),

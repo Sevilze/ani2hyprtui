@@ -56,7 +56,7 @@ impl AniParser {
             bail!("Not an ACON (animated cursor) RIFF file");
         }
 
-        let header = Self::read_anih_header(&mut cursor)?;
+        let header = Self::read_anih_header(&mut cursor, data)?;
         
         if (header.flags & ICON_FLAG) == 0 {
             bail!("Raw BMP images not supported");
@@ -68,9 +68,9 @@ impl AniParser {
 
         // Continue reading chunks
         while (cursor.position() as usize) < data.len() {
-            let chunk_result = Self::read_chunk(&mut cursor);
+            let chunk_result = Self::read_expected_chunk(&mut cursor, data, &[LIST_CHUNK, SEQ_CHUNK, RATE_CHUNK]);
             if chunk_result.is_err() {
-                break; // End of file
+                break; // End of file or no more expected chunks
             }
             
             let (chunk_name, chunk_size, chunk_data_start) = chunk_result?;
@@ -134,21 +134,35 @@ impl AniParser {
         let data_start = cursor.position();
         Ok((name, size, data_start))
     }
-
-    fn read_anih_header(cursor: &mut Cursor<&[u8]>) -> Result<AnihHeader> {
-        // Find anih chunk
+    
+    fn read_expected_chunk(cursor: &mut Cursor<&[u8]>, data: &[u8], expected: &[&[u8]]) -> Result<([u8; 4], u32, u64)> {
         loop {
-            let (name, size, _) = Self::read_chunk(cursor)?;
-            if &name == HEADER_CHUNK {
-                if size != 36 {
-                    bail!("Invalid anih header size");
-                }
-                break;
+            let (name, size, data_start) = Self::read_chunk(cursor)?;
+            
+            // Check if this is an expected chunk
+            if expected.iter().any(|&exp| &name == exp) {
+                return Ok((name, size, data_start));
             }
-            cursor.seek(SeekFrom::Current(size as i64))?;
+            
+            // Skip this chunk and continue
+            cursor.seek(SeekFrom::Start(data_start + size as u64))?;
+            
             if cursor.position() & 1 != 0 {
                 cursor.seek(SeekFrom::Current(1))?;
             }
+            
+            if cursor.position() as usize >= data.len() {
+                bail!("Expected chunk not found, reached end of file");
+            }
+        }
+    }
+
+    fn read_anih_header(cursor: &mut Cursor<&[u8]>, data: &[u8]) -> Result<AnihHeader> {
+        // Find anih chunk
+        let (_, size, _) = Self::read_expected_chunk(cursor, data, &[HEADER_CHUNK])?;
+        
+        if size != 36 {
+            bail!("Invalid anih header size");
         }
 
         Ok(AnihHeader {
