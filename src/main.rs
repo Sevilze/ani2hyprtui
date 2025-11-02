@@ -3,7 +3,8 @@ mod components;
 mod config;
 mod event;
 mod model;
-mod pipeline;
+pub mod pipeline;
+mod pipeline_worker;
 
 fn main() {
     let mut app = app::App::new();
