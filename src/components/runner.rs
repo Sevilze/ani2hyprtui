@@ -110,7 +110,7 @@ impl RunnerState {
 }
 
 impl Component for RunnerState {
-    fn update(&mut self, msg: &AppMsg) {
+    fn update(&mut self, msg: &AppMsg) -> Option<AppMsg> {
         match msg {
             AppMsg::PipelineStarted => {
                 self.start_pipeline();
@@ -132,6 +132,7 @@ impl Component for RunnerState {
             }
             _ => {}
         }
+        None
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer) {
