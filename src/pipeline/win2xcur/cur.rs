@@ -99,16 +99,21 @@ impl CurParser {
 
         let image_data = &data[offset..offset + size];
         
-        let img = if image_data.len() >= 8 && &image_data[0..8] == b"\x89PNG\r\n\x1a\n" {
-            image::load_from_memory_with_format(image_data, image::ImageFormat::Png)
-                .context("Failed to decode PNG cursor image")?
+        let (img, is_bmp) = if image_data.len() >= 8 && &image_data[0..8] == b"\x89PNG\r\n\x1a\n" {
+            (image::load_from_memory_with_format(image_data, image::ImageFormat::Png)
+                .context("Failed to decode PNG cursor image")?, false)
         } else {
             let bmp_data = create_bmp_from_dib(image_data)?;
-            image::load_from_memory_with_format(&bmp_data, image::ImageFormat::Bmp)
-                .context("Failed to decode DIB cursor image")?
+            (image::load_from_memory_with_format(&bmp_data, image::ImageFormat::Bmp)
+                .context("Failed to decode DIB cursor image")?, true)
         };
 
-        let rgba = img.to_rgba8();
+        let mut rgba = img.to_rgba8();
+        
+        if is_bmp {
+            apply_and_mask(&mut rgba, image_data)?;
+        }
+
         let _width = rgba.width();
         let _height = rgba.height();
 
@@ -123,6 +128,61 @@ impl CurParser {
             nominal_size,
         })
     }
+}
+
+fn apply_and_mask(image: &mut RgbaImage, dib_data: &[u8]) -> Result<()> {
+    if dib_data.len() < 40 {
+        return Ok(());
+    }
+    
+    let header_size = u32::from_le_bytes([dib_data[0], dib_data[1], dib_data[2], dib_data[3]]) as usize;
+    let width = i32::from_le_bytes([dib_data[4], dib_data[5], dib_data[6], dib_data[7]]).abs() as u32;
+    let height = i32::from_le_bytes([dib_data[8], dib_data[9], dib_data[10], dib_data[11]]).abs() as u32 / 2;
+    let bits_per_pixel = u16::from_le_bytes([dib_data[14], dib_data[15]]);
+    
+    let palette_size = calculate_palette_size(dib_data)? as usize;
+    
+    let xor_row_size = ((width * bits_per_pixel as u32 + 31) / 32) * 4;
+    let xor_size = xor_row_size * height;
+    
+    let and_mask_offset = header_size + palette_size + xor_size as usize;
+    
+    if dib_data.len() <= and_mask_offset {
+        return Ok(());
+    }
+    
+    let and_mask_data = &dib_data[and_mask_offset..];
+    let and_row_size = ((width + 31) / 32) * 4;
+    
+    for y in 0..height {
+        for x in 0..width {
+            // BMPs are stored bottom-up
+            let bmp_y = height - 1 - y;
+            
+            let row_offset = (bmp_y * and_row_size) as usize;
+            if row_offset >= and_mask_data.len() {
+                continue;
+            }
+            
+            let byte_offset = row_offset + (x / 8) as usize;
+            if byte_offset >= and_mask_data.len() {
+                continue;
+            }
+            
+            let byte = and_mask_data[byte_offset];
+            let bit = (byte >> (7 - (x % 8))) & 1;
+            
+            if bit == 1 {
+                // Transparent
+                if x < image.width() && y < image.height() {
+                    let pixel = image.get_pixel_mut(x, y);
+                    pixel[3] = 0;
+                }
+            }
+        }
+    }
+    
+    Ok(())
 }
 
 /// Create a complete BMP file from DIB data

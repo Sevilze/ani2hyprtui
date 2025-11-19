@@ -107,7 +107,7 @@ impl XcursorFile {
 
                     // Undo premultiplied alpha
                     let (r_out, g_out, b_out) = if a == 0 {
-                        (0, 0, 0)
+                        (255, 255, 255)
                     } else {
                         let alpha_factor = 255.0 / a as f64;
                         let r_unpre = ((r as f64 * alpha_factor).min(255.0)) as u8;
