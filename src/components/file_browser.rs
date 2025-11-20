@@ -6,7 +6,6 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
-    text::Line,
     widgets::{Block, Borders, List, ListItem, ListState, StatefulWidget},
 };
 use std::path::PathBuf;
@@ -98,7 +97,7 @@ impl FileBrowserState {
 }
 
 impl Component for FileBrowserState {
-    fn update(&mut self, msg: &AppMsg) {
+    fn update(&mut self, msg: &AppMsg) -> Option<AppMsg> {
         match msg {
             AppMsg::Key(key) => match key.code {
                 KeyCode::Down | KeyCode::Char('j') => {
@@ -134,10 +133,16 @@ impl Component for FileBrowserState {
                         }
                     }
                 }
+                KeyCode::Char('l') => {
+                    if let Some(tx) = &self.tx {
+                        let _ = tx.send(AppMsg::CursorSelected(self.current_dir.clone()));
+                    }
+                }
                 _ => {}
             },
             _ => {}
         }
+        None
     }
     
     fn render(&mut self, area: Rect, buf: &mut Buffer) {

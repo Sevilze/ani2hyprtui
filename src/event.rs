@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use crate::model::cursor::CursorMeta;
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum AppMsg {
     Tick,
     Key(KeyEvent),
@@ -17,10 +18,16 @@ pub enum AppMsg {
     // Cursor loading
     CursorLoaded(Vec<CursorMeta>),
     
+    // Mapping changes
+    MappingChanged(String, String),
+    MappingSaved,
+    
     // Pipeline control
     PipelineStarted,
     PipelineProgress(usize, usize),
     PipelineCompleted(usize),
+    PipelineFailed(String),
+    XCursorGenerated(String),
     
     // General
     ErrorOccurred(String),
