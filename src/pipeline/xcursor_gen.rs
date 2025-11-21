@@ -96,31 +96,27 @@ impl XCursorThemeBuilder {
     }
 
     fn create_theme_files(&self) -> Result<()> {
-        let index_theme_content = format!(
-            "[Icon Theme]\n\
-             Name={}\n\
-             Comment={} cursor theme\n\
-             Inherits=hicolor\n\
-             \n\
-             Directories=cursors\n\
-             \n\
-             [cursors]\n\
-             Context=Cursors\n\
-             Type=Fixed\n",
-            self.theme_name, self.theme_name
-        );
+        use crate::model::theme::{CursorTheme, IndexTheme};
 
-        fs::write(self.output_dir.join("index.theme"), index_theme_content)?;
+        let index_theme = IndexTheme {
+            name: self.theme_name.clone(),
+            comment: format!("{} cursor theme", self.theme_name),
+            inherits: "hicolor".to_string(),
+            directories: vec!["cursors".to_string(), "hyprcursors".to_string()],
+        };
 
-        let cursor_theme_content = format!(
-            "[Icon Theme]\n\
-             Name={}\n\
-             Comment={} cursor theme\n\
-             Inherits=hicolor\n",
-            self.theme_name, self.theme_name
-        );
+        fs::write(self.output_dir.join("index.theme"), index_theme.to_string())?;
 
-        fs::write(self.output_dir.join("cursor.theme"), cursor_theme_content)?;
+        let cursor_theme = CursorTheme {
+            name: self.theme_name.clone(),
+            comment: format!("{} cursor theme", self.theme_name),
+            inherits: self.theme_name.clone(),
+        };
+
+        fs::write(
+            self.output_dir.join("cursor.theme"),
+            cursor_theme.to_string(),
+        )?;
 
         Ok(())
     }
