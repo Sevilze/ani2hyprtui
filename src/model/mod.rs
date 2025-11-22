@@ -1,3 +1,3 @@
 pub mod cursor;
-pub mod state;
+pub mod mapping;
 pub mod theme;

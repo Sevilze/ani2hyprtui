@@ -20,3 +20,17 @@ pub struct CursorMeta {
     pub variants: Vec<SizeVariant>,
     pub src_cursor_path: Option<PathBuf>,
 }
+
+impl CursorMeta {
+    pub fn info(&self) -> String {
+        let src = self
+            .src_cursor_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or("None".to_string());
+        format!(
+            "{} (Windows: {:?}) - Src: {}",
+            self.x11_name, self.win_names, src
+        )
+    }
+}

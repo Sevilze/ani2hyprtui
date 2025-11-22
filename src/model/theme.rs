@@ -16,16 +16,16 @@ impl fmt::Display for IndexTheme {
         if !self.inherits.is_empty() {
             writeln!(f, "Inherits={}", self.inherits)?;
         }
-        writeln!(f, "")?;
+        writeln!(f)?;
         writeln!(f, "# Directory list")?;
         writeln!(f, "Directories={}", self.directories.join(","))?;
-        writeln!(f, "")?;
+        writeln!(f)?;
 
         for dir in &self.directories {
             writeln!(f, "[{}]", dir)?;
             writeln!(f, "Context=Cursors")?;
             writeln!(f, "Type=Fixed")?;
-            writeln!(f, "")?;
+            writeln!(f)?;
         }
 
         Ok(())
