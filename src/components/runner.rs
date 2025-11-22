@@ -95,11 +95,7 @@ impl Component for RunnerState {
     }
 
 
-// ... imports
-
-// ... struct definition
-
-// ... impl Component
+    fn render(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {
         let block = focused_block("Pipeline Runner", is_focused);
