@@ -55,11 +55,12 @@ impl PipelineWorker {
         cursor_files: &[PathBuf],
         xcur_dir: &Path,
         png_dir: Option<&Path>,
+        target_sizes: Vec<u32>,
         tx: &Sender<AppMsg>,
     ) -> Result<(usize, usize)> {
         // (processed, failed)
         let total_files = cursor_files.len();
-        let conversion_options = ConversionOptions::new();
+        let conversion_options = ConversionOptions::new().with_target_sizes(target_sizes);
         let mut processed = 0;
         let mut failed = 0;
 
@@ -147,7 +148,7 @@ impl PipelineWorker {
         fs::create_dir_all(&xcur_dir)?;
 
         let (processed, failed) =
-            Self::convert_batch(&cursor_files, &xcur_dir, Some(output_dir), tx)?;
+            Self::convert_batch(&cursor_files, &xcur_dir, Some(output_dir), Vec::new(), tx)?;
 
         let _ = fs::remove_dir_all(&xcur_dir);
 
@@ -194,7 +195,7 @@ impl PipelineWorker {
             total_files
         )));
 
-        let (processed, _) = Self::convert_batch(&cursor_files, output_dir, None, tx)?;
+        let (processed, _) = Self::convert_batch(&cursor_files, output_dir, None, Vec::new(), tx)?;
 
         let _ = tx.send(AppMsg::PipelineCompleted(processed));
         Ok(())
@@ -206,13 +207,19 @@ impl PipelineWorker {
         output_dir: PathBuf,
         theme_name: String,
         mapping: CursorMapping,
+        target_sizes: Vec<u32>,
     ) {
         let tx = self.tx.clone();
 
         thread::spawn(move || {
-            if let Err(e) =
-                Self::run_full_theme_pipeline(&input_dir, &output_dir, &theme_name, mapping, &tx)
-            {
+            if let Err(e) = Self::run_full_theme_pipeline(
+                &input_dir,
+                &output_dir,
+                &theme_name,
+                mapping,
+                target_sizes,
+                &tx,
+            ) {
                 let _ = tx.send(AppMsg::PipelineFailed(format!("{}", e)));
             }
         });
@@ -302,9 +309,11 @@ impl PipelineWorker {
                         }
                     }
 
-                    if let Err(e) = convert_windows_cursor(&source_path, &xcur_output, &options, |msg| {
-                        let _ = tx.send(AppMsg::LogMessage(msg));
-                    }) {
+                    if let Err(e) =
+                        convert_windows_cursor(&source_path, &xcur_output, &options, |msg| {
+                            let _ = tx.send(AppMsg::LogMessage(msg));
+                        })
+                    {
                         let _ = tx.send(AppMsg::LogMessage(format!(
                             "Failed to convert XCursor: {}",
                             e
@@ -366,7 +375,6 @@ impl PipelineWorker {
                     } else {
                         let _ = tx.send(AppMsg::LogMessage(format!("Updated {}", x11_name)));
                     }
-
                 } else {
                     let _ = tx.send(AppMsg::LogMessage(format!(
                         "Source file not found for {}",
@@ -387,6 +395,7 @@ impl PipelineWorker {
         output_dir: &Path,
         theme_name: &str,
         mapping: CursorMapping,
+        target_sizes: Vec<u32>,
         tx: &Sender<AppMsg>,
     ) -> Result<()> {
         // ANI to XCursor binaries
@@ -410,7 +419,8 @@ impl PipelineWorker {
             return Ok(());
         }
 
-        let (processed, _) = Self::convert_batch(&cursor_files, &xcur_dir, Some(&png_dir), tx)?;
+        let (processed, _) =
+            Self::convert_batch(&cursor_files, &xcur_dir, Some(&png_dir), target_sizes, tx)?;
 
         if processed == 0 {
             let _ = tx.send(AppMsg::PipelineFailed(
@@ -470,14 +480,9 @@ impl PipelineWorker {
             "Compiling Hyprcursor theme...".to_string(),
         ));
 
-        hyprcursor::create_cursor_theme(
-            working_state_dir,
-            Some(&theme_output),
-            true,
-            |msg| {
-                let _ = tx.send(AppMsg::LogMessage(msg));
-            },
-        )?;
+        hyprcursor::create_cursor_theme(working_state_dir, Some(&theme_output), true, |msg| {
+            let _ = tx.send(AppMsg::LogMessage(msg));
+        })?;
 
         let _ = tx.send(AppMsg::LogMessage(format!(
             "Generated Hyprcursor files in {}",

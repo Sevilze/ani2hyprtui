@@ -43,9 +43,7 @@ impl CursorMapping {
     }
 
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
-        let content = self
-            .to_toml_string()
-            .map_err(std::io::Error::other)?;
+        let content = self.to_toml_string().map_err(std::io::Error::other)?;
         fs::write(path, content)
     }
 

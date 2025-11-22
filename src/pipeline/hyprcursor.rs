@@ -118,7 +118,10 @@ where
 
     if out_path.exists() {
         if !exact_output {
-            log_fn(format!("Output directory {:?} exists. Cleaning...", out_path));
+            log_fn(format!(
+                "Output directory {:?} exists. Cleaning...",
+                out_path
+            ));
             fs::remove_dir_all(&out_path)?;
             fs::create_dir_all(&out_path)?;
         } else {
@@ -170,7 +173,12 @@ where
     Ok(())
 }
 
-pub fn process_shape<F>(shape_dir: &Path, out_dir: &Path, shape_name: &str, mut log_fn: F) -> Result<()>
+pub fn process_shape<F>(
+    shape_dir: &Path,
+    out_dir: &Path,
+    shape_name: &str,
+    mut log_fn: F,
+) -> Result<()>
 where
     F: FnMut(String),
 {
@@ -285,7 +293,7 @@ pub fn extract_xcursor_to_hypr_source(
         writeln!(meta_file, "hotspot_x = 0.0")?;
         writeln!(meta_file, "hotspot_y = 0.0")?;
     }
-    writeln!(meta_file, "")?;
+    writeln!(meta_file)?;
 
     for entry in &entries {
         let file_name = Path::new(&entry.image)
@@ -298,7 +306,7 @@ pub fn extract_xcursor_to_hypr_source(
             entry.size, file_name, entry.delay
         )?;
     }
-    writeln!(meta_file, "")?;
+    writeln!(meta_file)?;
 
     for ov in overrides {
         writeln!(meta_file, "define_override = {}", ov)?;
@@ -345,7 +353,10 @@ where
 
     if out_dir.exists() {
         if !exact_output {
-            log_fn(format!("Output directory {:?} exists. Cleaning...", out_dir));
+            log_fn(format!(
+                "Output directory {:?} exists. Cleaning...",
+                out_dir
+            ));
             fs::remove_dir_all(&out_dir)?;
             fs::create_dir_all(&out_dir)?;
         } else {
@@ -430,7 +441,7 @@ where
             writeln!(meta_file, "hotspot_x = 0.0")?;
             writeln!(meta_file, "hotspot_y = 0.0")?;
         }
-        writeln!(meta_file, "")?;
+        writeln!(meta_file)?;
 
         for entry in &entries {
             let file_name = Path::new(&entry.image)
@@ -443,22 +454,21 @@ where
                 entry.size, file_name, entry.delay
             )?;
         }
-        writeln!(meta_file, "")?;
+        writeln!(meta_file)?;
 
         // Find symlinks pointing to this file
         for sub_entry in fs::read_dir(&cursors_path)? {
             let sub_entry = sub_entry?;
             let sub_path = sub_entry.path();
-            if sub_path.is_symlink() {
-                if let (Ok(p1), Ok(p2)) = (fs::canonicalize(&path), fs::canonicalize(&sub_path)) {
-                    if p1 == p2 {
-                        let sym_name = sub_path
-                            .file_stem()
-                            .ok_or_else(|| anyhow!("Invalid symlink filename"))?
-                            .to_string_lossy();
-                        writeln!(meta_file, "define_override = {}", sym_name)?;
-                    }
-                }
+            if sub_path.is_symlink()
+                && let (Ok(p1), Ok(p2)) = (fs::canonicalize(&path), fs::canonicalize(&sub_path))
+                && p1 == p2
+            {
+                let sym_name = sub_path
+                    .file_stem()
+                    .ok_or_else(|| anyhow!("Invalid symlink filename"))?
+                    .to_string_lossy();
+                writeln!(meta_file, "define_override = {}", sym_name)?;
             }
         }
 

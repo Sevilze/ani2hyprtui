@@ -1,15 +1,13 @@
 use super::Component;
 use crate::event::AppMsg;
+use crate::widgets::common::focused_block;
 use crossterm::event::KeyCode;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{
-        Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        StatefulWidget, Widget,
-    },
+    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
 };
 
 #[derive(Default)]
@@ -18,7 +16,6 @@ pub struct LogsState {
     scroll_state: ScrollbarState,
     scroll_offset: u16,
 }
-
 
 impl LogsState {
     pub fn add_log(&mut self, message: String) {
@@ -65,22 +62,7 @@ impl Component for LogsState {
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {
-        let border_color = if is_focused {
-            Color::Rgb(118, 227, 73)
-        } else {
-            Color::Gray
-        };
-        let border_type = if is_focused {
-            BorderType::Thick
-        } else {
-            BorderType::Plain
-        };
-
-        let block = Block::default()
-            .title("Logs")
-            .borders(Borders::ALL)
-            .border_type(border_type)
-            .border_style(Style::default().fg(border_color));
+        let block = focused_block("Logs", is_focused);
 
         let inner_area = block.inner(area);
         block.render(area, buf);

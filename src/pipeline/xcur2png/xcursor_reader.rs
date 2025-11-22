@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use byteorder::{LittleEndian, ReadBytesExt};
 use image::{Rgba, RgbaImage};
 use std::io::{Cursor, Read};

@@ -1,17 +1,15 @@
-use super::preview::PreviewState;
 use super::Component;
+use super::preview::PreviewState;
 use crate::event::AppMsg;
 use crate::model::cursor::CursorMeta;
+use crate::widgets::common::focused_block;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, BorderType, Borders, List, ListItem, ListState, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, StatefulWidget, Widget,
-    },
+    widgets::{List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
 };
 use ratatui_image::picker::Picker;
 use std::collections::HashSet;
@@ -83,20 +81,22 @@ impl HotspotEditorState {
 
     fn next_frame(&mut self) {
         if let Some(len) = self.current_variant_frames_len()
-            && len > 0 {
-                self.frame_ix = (self.frame_ix + 1) % len;
-            }
+            && len > 0
+        {
+            self.frame_ix = (self.frame_ix + 1) % len;
+        }
     }
 
     fn prev_frame(&mut self) {
         if let Some(len) = self.current_variant_frames_len()
-            && len > 0 {
-                self.frame_ix = if self.frame_ix == 0 {
-                    len - 1
-                } else {
-                    self.frame_ix - 1
-                };
-            }
+            && len > 0
+        {
+            self.frame_ix = if self.frame_ix == 0 {
+                len - 1
+            } else {
+                self.frame_ix - 1
+            };
+        }
     }
 
     fn next_cursor(&mut self) {
@@ -123,11 +123,12 @@ impl HotspotEditorState {
 
     fn next_variant(&mut self) {
         if let Some(cursor) = self.cursors.get(self.selected_cursor)
-            && self.selected_variant < cursor.variants.len().saturating_sub(1) {
-                self.selected_variant += 1;
-                self.frame_ix = 0;
-                self.reset_animation_timer();
-            }
+            && self.selected_variant < cursor.variants.len().saturating_sub(1)
+        {
+            self.selected_variant += 1;
+            self.frame_ix = 0;
+            self.reset_animation_timer();
+        }
     }
 
     fn prev_variant(&mut self) {
@@ -140,19 +141,20 @@ impl HotspotEditorState {
 
     fn move_hotspot(&mut self, dx: i32, dy: i32) {
         if let Some(cursor) = self.cursors.get_mut(self.selected_cursor)
-            && let Some(variant) = cursor.variants.get_mut(self.selected_variant) {
-                let (mut hx, mut hy) = variant.hotspot;
+            && let Some(variant) = cursor.variants.get_mut(self.selected_variant)
+        {
+            let (mut hx, mut hy) = variant.hotspot;
 
-                hx = (hx as i32 + dx).max(0).min(variant.size as i32) as u32;
-                hy = (hy as i32 + dy).max(0).min(variant.size as i32) as u32;
+            hx = (hx as i32 + dx).max(0).min(variant.size as i32) as u32;
+            hy = (hy as i32 + dy).max(0).min(variant.size as i32) as u32;
 
-                if variant.hotspot != (hx, hy) {
-                    variant.hotspot = (hx, hy);
-                    self.modified_hotspots.insert(cursor.x11_name.clone());
-                    // Invalidate cache for all frames of this variant to redraw hotspot
-                    self.preview.invalidate_cache_for_variant(variant);
-                }
+            if variant.hotspot != (hx, hy) {
+                variant.hotspot = (hx, hy);
+                self.modified_hotspots.insert(cursor.x11_name.clone());
+                // Invalidate cache for all frames of this variant to redraw hotspot
+                self.preview.invalidate_cache_for_variant(variant);
             }
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<AppMsg> {
@@ -250,22 +252,7 @@ impl HotspotEditorState {
             })
             .collect();
 
-        let border_color = if is_focused {
-            Color::Rgb(118, 227, 73)
-        } else {
-            Color::Gray
-        };
-        let border_type = if is_focused {
-            BorderType::Thick
-        } else {
-            BorderType::Plain
-        };
-
-        let block = Block::default()
-            .title("Cursors (j/k: select)")
-            .borders(Borders::ALL)
-            .border_type(border_type)
-            .border_style(Style::default().fg(border_color));
+        let block = focused_block("Cursors (j/k: select)", is_focused);
 
         let inner_area = block.inner(area);
         block.render(area, buf);
@@ -335,9 +322,10 @@ impl Component for HotspotEditorState {
                 // Default to 48x48
                 self.selected_variant = 0;
                 if let Some(cursor) = self.cursors.first()
-                    && let Some(idx) = cursor.variants.iter().position(|v| v.size == 48) {
-                        self.selected_variant = idx;
-                    }
+                    && let Some(idx) = cursor.variants.iter().position(|v| v.size == 48)
+                {
+                    self.selected_variant = idx;
+                }
                 self.frame_ix = 0;
                 self.modified_hotspots.clear();
                 self.preview.clear_cache();
@@ -360,22 +348,7 @@ impl Component for HotspotEditorState {
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {
         if self.cursors.is_empty() {
-            let border_color = if is_focused {
-                Color::Rgb(118, 227, 73)
-            } else {
-                Color::Gray
-            };
-            let border_type = if is_focused {
-                BorderType::Thick
-            } else {
-                BorderType::Plain
-            };
-
-            let block = Block::default()
-                .title("Hotspot Editor")
-                .borders(Borders::ALL)
-                .border_type(border_type)
-                .border_style(Style::default().fg(border_color));
+            let block = focused_block("Hotspot Editor", is_focused);
 
             ratatui::widgets::Paragraph::new("No cursor loaded")
                 .block(block)
@@ -384,24 +357,7 @@ impl Component for HotspotEditorState {
         }
 
         // Main Editor Block
-        let border_color = if is_focused {
-            Color::Rgb(118, 227, 73)
-        } else if self.playing {
-            Color::Yellow
-        } else {
-            Color::Gray
-        };
-        let border_type = if is_focused {
-            BorderType::Thick
-        } else {
-            BorderType::Plain
-        };
-
-        let block = Block::default()
-            .title("Hotspot Editor")
-            .borders(Borders::ALL)
-            .border_type(border_type)
-            .border_style(Style::default().fg(border_color));
+        let block = focused_block("Hotspot Editor", is_focused);
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -415,7 +371,10 @@ impl Component for HotspotEditorState {
 
         let path_string = if let Some(cursor) = self.cursors.get(self.selected_cursor) {
             if let Some(variant) = cursor.variants.get(self.selected_variant) {
-                variant.frames.get(self.frame_ix).map(|frame| frame.png_path.to_string_lossy().to_string())
+                variant
+                    .frames
+                    .get(self.frame_ix)
+                    .map(|frame| frame.png_path.to_string_lossy().to_string())
             } else {
                 None
             }

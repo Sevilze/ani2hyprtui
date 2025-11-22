@@ -1,28 +1,34 @@
 use super::Component;
 use crate::event::AppMsg;
+use crate::widgets::common::focused_block;
 use crossbeam_channel::Sender;
 use crossterm::event::KeyCode;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, ListState, StatefulWidget},
+    widgets::{List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
 };
 use std::path::PathBuf;
 
 pub struct FileBrowserState {
     pub current_dir: PathBuf,
+    pub initial_root: PathBuf,
     pub entries: Vec<PathBuf>,
     pub list_state: ListState,
+    pub scroll_state: ScrollbarState,
     pub tx: Option<Sender<AppMsg>>,
 }
 
 impl Default for FileBrowserState {
     fn default() -> Self {
+        let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let mut state = Self {
-            current_dir: PathBuf::from("."),
+            current_dir: current_dir.clone(),
+            initial_root: current_dir,
             entries: Vec::new(),
             list_state: ListState::default(),
+            scroll_state: ScrollbarState::default(),
             tx: None,
         };
         state.refresh_entries();
@@ -43,8 +49,8 @@ impl FileBrowserState {
     fn refresh_entries(&mut self) {
         self.entries.clear();
 
-        // Add parent directory entry if not at root
-        if self.current_dir.parent().is_some() {
+        // Add parent directory entry if not at root and not at initial root
+        if self.current_dir.parent().is_some() && self.current_dir != self.initial_root {
             self.entries.push(PathBuf::from(".."));
         }
 
@@ -77,12 +83,14 @@ impl FileBrowserState {
                         self.current_dir = parent.to_path_buf();
                         self.refresh_entries();
                         self.list_state.select(Some(0));
+                        self.scroll_state = self.scroll_state.position(0);
                     }
                     None
                 } else if path.is_dir() {
                     self.current_dir = path.clone();
                     self.refresh_entries();
                     self.list_state.select(Some(0));
+                    self.scroll_state = self.scroll_state.position(0);
                     None
                 } else {
                     Some(self.current_dir.clone())
@@ -98,9 +106,12 @@ impl FileBrowserState {
 
 impl Component for FileBrowserState {
     fn update(&mut self, msg: &AppMsg) -> Option<AppMsg> {
-        match msg {
-            AppMsg::Key(key) => match key.code {
+        if let AppMsg::Key(key) = msg {
+            match key.code {
                 KeyCode::Down | KeyCode::Char('j') => {
+                    if self.entries.is_empty() {
+                        return None;
+                    }
                     let i = match self.list_state.selected() {
                         Some(i) => {
                             if i >= self.entries.len().saturating_sub(1) {
@@ -112,8 +123,12 @@ impl Component for FileBrowserState {
                         None => 0,
                     };
                     self.list_state.select(Some(i));
+                    self.scroll_state = self.scroll_state.position(i);
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
+                    if self.entries.is_empty() {
+                        return None;
+                    }
                     let i = match self.list_state.selected() {
                         Some(i) => {
                             if i == 0 {
@@ -125,12 +140,13 @@ impl Component for FileBrowserState {
                         None => 0,
                     };
                     self.list_state.select(Some(i));
+                    self.scroll_state = self.scroll_state.position(i);
                 }
                 KeyCode::Enter => {
-                    if let Some(dir) = self.enter_selected() {
-                        if let Some(tx) = &self.tx {
-                            let _ = tx.send(AppMsg::CursorSelected(dir));
-                        }
+                    if let Some(dir) = self.enter_selected()
+                        && let Some(tx) = &self.tx
+                    {
+                        let _ = tx.send(AppMsg::CursorSelected(dir));
                     }
                 }
                 KeyCode::Char('l') => {
@@ -139,13 +155,19 @@ impl Component for FileBrowserState {
                     }
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
         None
     }
-    
-    fn render(&mut self, area: Rect, buf: &mut Buffer) {
+
+
+// ... imports
+
+// ... struct definition
+
+// ... impl Component
+
+    fn render(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {
         let items: Vec<ListItem> = self
             .entries
             .iter()
@@ -156,13 +178,11 @@ impl Component for FileBrowserState {
             })
             .collect();
 
-        let block = Block::default()
-            .title("File Browser")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Blue));
+        let block = focused_block("File Browser", is_focused);
+        let inner_area = block.inner(area);
+        block.render(area, buf);
 
         let list = List::new(items)
-            .block(block)
             .highlight_style(
                 Style::default()
                     .fg(Color::Yellow)
@@ -170,6 +190,15 @@ impl Component for FileBrowserState {
             )
             .highlight_symbol(">> ");
 
-        StatefulWidget::render(list, area, buf, &mut self.list_state);
+        StatefulWidget::render(list, inner_area, buf, &mut self.list_state);
+
+        self.scroll_state = self.scroll_state.content_length(self.entries.len());
+
+        let scrollbar = Scrollbar::default()
+            .orientation(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("▲"))
+            .end_symbol(Some("▼"));
+
+        scrollbar.render(inner_area, buf, &mut self.scroll_state);
     }
 }

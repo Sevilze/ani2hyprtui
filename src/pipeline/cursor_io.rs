@@ -5,10 +5,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-use xcursor::parser::{parse_xcursor, Image};
+use xcursor::parser::{Image, parse_xcursor};
 
 use super::cursor_types::{CursorMeta, Frame, SizeVariant};
-use super::win2xcur::{CursorFormat, CurParser, AniParser};
+use super::win2xcur::{AniParser, CurParser, CursorFormat, cur::CursorFrame};
+
+type PngFrameData = (PathBuf, u32, (u16, u16));
 
 fn scan_cursor_dir(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut cursor_files = Vec::new();
@@ -41,16 +43,20 @@ fn is_likely_cursor_file(path: &Path) -> bool {
     // skip files with common non-cursor extensions
     if let Some(ext) = path.extension() {
         let ext_str = ext.to_string_lossy().to_lowercase();
-        if matches!(ext_str.as_str(), "txt" | "md" | "conf" | "theme" | "png" | "svg") {
+        if matches!(
+            ext_str.as_str(),
+            "txt" | "md" | "conf" | "theme" | "png" | "svg"
+        ) {
             return false;
         }
     }
 
     // Try to read first 4 bytes to check for Xcur magic
-    if let Ok(bytes) = fs::read(path) {
-        if bytes.len() >= 4 && &bytes[0..4] == b"Xcur" {
-            return true;
-        }
+    if let Ok(bytes) = fs::read(path)
+        && bytes.len() >= 4
+        && &bytes[0..4] == b"Xcur"
+    {
+        return true;
     }
 
     false
@@ -63,12 +69,12 @@ fn is_windows_cursor_file(path: &Path) -> bool {
             return true;
         }
     }
-    
+
     // check by content
     if let Ok(bytes) = fs::read(path) {
         return CursorFormat::detect(&bytes).is_some();
     }
-    
+
     false
 }
 
@@ -77,22 +83,23 @@ fn parse_cursor_file(path: &Path) -> Result<Vec<Image>> {
     parse_xcursor(&data).context("Failed to parse X11 cursor file")
 }
 
-fn parse_windows_cursor_file(path: &Path) -> Result<Vec<crate::pipeline::win2xcur::cur::CursorFrame>> {
+fn parse_windows_cursor_file(path: &Path) -> Result<Vec<CursorFrame>> {
     let data = fs::read(path).context("Failed to read Windows cursor file")?;
-    
-    let format = CursorFormat::detect(&data)
-        .ok_or_else(|| anyhow::anyhow!("Unsupported cursor format"))?;
-    
+
+    let format =
+        CursorFormat::detect(&data).ok_or_else(|| anyhow::anyhow!("Unsupported cursor format"))?;
+
     match format {
-        CursorFormat::Cur => CurParser::parse(&data),
-        CursorFormat::Ani => AniParser::parse(&data),
+        CursorFormat::Cur => CurParser::parse(&data, |msg| {
+            eprintln!("{}", msg);
+        }),
+        CursorFormat::Ani => AniParser::parse(&data, |msg| {
+            eprintln!("{}", msg);
+        }),
     }
 }
 
-fn convert_windows_cursor_to_meta(
-    path: &Path,
-    frames: Vec<crate::pipeline::win2xcur::cur::CursorFrame>,
-) -> CursorMeta {
+fn convert_windows_cursor_to_meta(path: &Path, frames: Vec<CursorFrame>) -> CursorMeta {
     let x11_name = path
         .file_stem()
         .and_then(|n| n.to_str())
@@ -101,7 +108,7 @@ fn convert_windows_cursor_to_meta(
 
     // group images by nominal size across all frames
     let mut size_map: HashMap<u32, Vec<(usize, usize)>> = HashMap::new(); // size -> [(frame_idx, img_idx)]
-    
+
     for (frame_idx, frame) in frames.iter().enumerate() {
         for (img_idx, img) in frame.images.iter().enumerate() {
             size_map
@@ -215,7 +222,11 @@ pub fn load_cursor_folder(dir: &Path) -> Result<Vec<CursorMeta>> {
                     cursors.push(meta);
                 }
                 Err(e) => {
-                    eprintln!("Warning: Failed to parse Windows cursor {}: {}", path.display(), e);
+                    eprintln!(
+                        "Warning: Failed to parse Windows cursor {}: {}",
+                        path.display(),
+                        e
+                    );
                 }
             }
         } else if is_likely_cursor_file(&path) {
@@ -227,7 +238,11 @@ pub fn load_cursor_folder(dir: &Path) -> Result<Vec<CursorMeta>> {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Warning: Failed to parse X11 cursor {}: {}", path.display(), e);
+                    eprintln!(
+                        "Warning: Failed to parse X11 cursor {}: {}",
+                        path.display(),
+                        e
+                    );
                 }
             }
         }
@@ -239,54 +254,56 @@ pub fn load_cursor_folder(dir: &Path) -> Result<Vec<CursorMeta>> {
 /// load cursors from a PNG extraction directory (for preview)
 pub fn load_cursor_folder_from_pngs(dir: &Path) -> Result<Vec<CursorMeta>> {
     let mut cursors = Vec::new();
-    
+
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let cursor_dir = entry.path();
-        
+
         if !cursor_dir.is_dir() {
             continue;
         }
-        
+
         let cursor_name = cursor_dir
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string();
-        
+
         let conf_file = cursor_dir.join(format!("{}.conf", cursor_name));
         if !conf_file.exists() {
             continue;
         }
-        
+
         // parse .conf file
         let conf_content = fs::read_to_string(&conf_file)?;
-        let mut variants_map: HashMap<u32, Vec<(PathBuf, u32, (u16, u16))>> = HashMap::new();
-        
+        let mut variants_map: HashMap<u32, Vec<PngFrameData>> = HashMap::new();
+
         for line in conf_content.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            
+
             let all_parts: Vec<&str> = line.split_whitespace().collect();
-            
+
             if all_parts.len() < 4 {
                 continue;
             }
-            
+
             let size_str = all_parts[0];
             let hotspot_x_str = all_parts[1];
             let hotspot_y_str = all_parts[2];
-            
-            let (png_filename, delay_str) = if all_parts.len() > 4 
-                && all_parts.last().unwrap().parse::<u32>().is_ok() 
-                && all_parts.len() >= 5 {
-                (all_parts[3..all_parts.len()-1].join(" "), Some(all_parts.last().unwrap()))
-            } else {
-                (all_parts[3..].join(" "), None)
-            };
-            
+
+            let (png_filename, delay_str) =
+                if all_parts.len() >= 5 && all_parts.last().unwrap().parse::<u32>().is_ok() {
+                    (
+                        all_parts[3..all_parts.len() - 1].join(" "),
+                        Some(all_parts.last().unwrap()),
+                    )
+                } else {
+                    (all_parts[3..].join(" "), None)
+                };
+
             if let (Ok(size), Ok(hotspot_x), Ok(hotspot_y)) = (
                 size_str.parse::<u32>(),
                 hotspot_x_str.parse::<u16>(),
@@ -298,18 +315,17 @@ pub fn load_cursor_folder_from_pngs(dir: &Path) -> Result<Vec<CursorMeta>> {
                 } else {
                     cursor_dir.join(&png_filename)
                 };
-                
-                let delay_ms = delay_str
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .unwrap_or(50);
-                
-                variants_map
-                    .entry(size)
-                    .or_insert_with(Vec::new)
-                    .push((png_path, delay_ms, (hotspot_x, hotspot_y)));
+
+                let delay_ms = delay_str.and_then(|s| s.parse::<u32>().ok()).unwrap_or(50);
+
+                variants_map.entry(size).or_default().push((
+                    png_path,
+                    delay_ms,
+                    (hotspot_x, hotspot_y),
+                ));
             }
         }
-        
+
         let mut variants = Vec::new();
         for (size, frames_data) in variants_map {
             let hotspot = frames_data.first().map(|(_, _, h)| *h).unwrap_or((0, 0));
@@ -320,14 +336,14 @@ pub fn load_cursor_folder_from_pngs(dir: &Path) -> Result<Vec<CursorMeta>> {
                     delay_ms: delay,
                 })
                 .collect();
-            
+
             variants.push(SizeVariant {
                 size,
                 frames,
                 hotspot: (hotspot.0 as u32, hotspot.1 as u32),
             });
         }
-        
+
         if !variants.is_empty() {
             cursors.push(CursorMeta {
                 x11_name: cursor_name.clone(),
@@ -337,7 +353,6 @@ pub fn load_cursor_folder_from_pngs(dir: &Path) -> Result<Vec<CursorMeta>> {
             });
         }
     }
-    
+
     Ok(cursors)
 }
-

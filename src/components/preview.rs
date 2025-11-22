@@ -7,11 +7,21 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, StatefulWidget, Widget},
 };
-use ratatui_image::{picker::Picker, protocol::StatefulProtocol, StatefulImage};
+use ratatui_image::{StatefulImage, picker::Picker, protocol::StatefulProtocol};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::model::cursor::{CursorMeta, Frame, SizeVariant};
+
+pub type PreviewData<'a> = (
+    &'a str,
+    (u32, u32),
+    u32,
+    &'a CursorMeta,
+    &'a SizeVariant,
+    &'a Frame,
+    usize,
+);
 
 pub struct PreviewState {
     pub picker: Arc<Mutex<Picker>>,
@@ -145,10 +155,11 @@ impl PreviewState {
         let key = format!("{}|{}x{}", path, target_size.0, target_size.1);
         if !self.image_cache.contains_key(&key)
             && let Some(img) = self.process_image(path, hotspot, size, target_size)
-                && let Ok(picker) = self.picker.lock() {
-                    let proto = picker.new_resize_protocol(img);
-                    self.image_cache.insert(key, proto);
-                }
+            && let Ok(picker) = self.picker.lock()
+        {
+            let proto = picker.new_resize_protocol(img);
+            self.image_cache.insert(key, proto);
+        }
     }
 
     pub fn invalidate_cache_for_variant(&mut self, variant: &SizeVariant) {
@@ -211,15 +222,7 @@ impl PreviewState {
         buf: &mut Buffer,
         _is_focused: bool,
         _playing: bool,
-        data: Option<(
-            &str,
-            (u32, u32),
-            u32,
-            &CursorMeta,
-            &SizeVariant,
-            &Frame,
-            usize,
-        )>,
+        data: Option<PreviewData>,
     ) {
         let chunks = Layout::default()
             .constraints([Constraint::Min(10), Constraint::Length(4)])

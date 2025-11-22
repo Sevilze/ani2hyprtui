@@ -1,14 +1,14 @@
 // X11 Xcursor to PNG extraction pipeline
 
-pub mod xcursor_reader;
-pub mod png_writer;
 pub mod extractor;
+pub mod png_writer;
+pub mod xcursor_reader;
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-pub use xcursor_reader::{XcursorFile, XcursorImage};
 pub use extractor::{ExtractOptions, extract_to_pngs};
+pub use xcursor_reader::{XcursorFile, XcursorImage};
 
 pub fn extract_cursor(
     xcursor_path: &Path,
@@ -24,7 +24,6 @@ pub fn extract_cursor(
                 .unwrap_or("cursor")
         }))
         .with_initial_suffix(initial_suffix);
-    
+
     extract_to_pngs(xcursor_path, output_dir, &options)
 }
-

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use super::png_writer::{write_config_file, write_png, PngWriteConfig};
+use super::png_writer::{PngWriteConfig, write_config_file, write_png};
 use super::xcursor_reader::XcursorFile;
 
 #[derive(Debug, Clone)]
@@ -77,7 +77,7 @@ pub fn extract_to_pngs(
 
     for size in sizes {
         let images = xcursor.get_images_for_size(size);
-        for (_frame_idx, image) in images.iter().enumerate() {
+        for image in images.iter() {
             let filename = format!("{}_{:03}.png", options.prefix, suffix);
             let filepath = output_dir.join(&filename);
 
@@ -85,11 +85,7 @@ pub fn extract_to_pngs(
             extracted_files.push(filepath);
 
             if options.write_config {
-                let relative_path = if output_dir == Path::new(".") {
-                    filename.clone()
-                } else {
-                    filename.clone()
-                };
+                let relative_path = filename.clone();
 
                 config_entries.push(PngWriteConfig {
                     filename: relative_path,
@@ -110,8 +106,7 @@ pub fn extract_to_pngs(
     if options.write_config && !config_entries.is_empty() {
         let config_name = options
             .config_name
-            .as_ref()
-            .map(|s| s.clone())
+            .clone()
             .unwrap_or_else(|| format!("{}.conf", options.prefix));
 
         let config_path = output_dir.join(config_name);

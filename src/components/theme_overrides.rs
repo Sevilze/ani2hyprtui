@@ -1,5 +1,6 @@
 use super::Component;
 use crate::event::AppMsg;
+use crate::widgets::common::focused_block;
 use crossterm::event::KeyCode;
 use ratatui::{
     buffer::Buffer,
@@ -7,7 +8,7 @@ use ratatui::{
     style::{Color, Style},
     text::Span,
     widgets::{
-        Block, BorderType, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
+        Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
     },
 };
 use std::collections::HashSet;
@@ -79,22 +80,7 @@ impl Component for ThemeOverridesState {
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {
-        let border_color = if is_focused {
-            Color::Rgb(118, 227, 73)
-        } else {
-            Color::Gray
-        };
-        let border_type = if is_focused {
-            BorderType::Thick
-        } else {
-            BorderType::Plain
-        };
-
-        let block = Block::default()
-            .title("Theme Overrides")
-            .borders(Borders::ALL)
-            .border_type(border_type)
-            .border_style(Style::default().fg(border_color));
+        let block = focused_block("Theme Overrides", is_focused);
 
         let inner = block.inner(area);
         block.render(area, buf);

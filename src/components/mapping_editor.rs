@@ -1,6 +1,7 @@
 use super::Component;
 use crate::event::AppMsg;
 use crate::model::mapping::CursorMapping;
+use crate::widgets::common::focused_block;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     buffer::Buffer,
@@ -8,7 +9,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
+        Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
         ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget,
     },
 };
@@ -76,16 +77,17 @@ impl MappingEditorState {
             match key.code {
                 KeyCode::Enter => {
                     if let Some(idx) = self.popup_state.selected()
-                        && idx < self.available_sources.len() {
-                            let x11_name = self.mappings_list[self.selected_index].0.clone();
-                            let new_win_name = self.available_sources[idx].clone();
+                        && idx < self.available_sources.len()
+                    {
+                        let x11_name = self.mappings_list[self.selected_index].0.clone();
+                        let new_win_name = self.available_sources[idx].clone();
 
-                            self.mapping
-                                .set_mapping(x11_name.clone(), new_win_name.clone());
-                            self.mappings_list[self.selected_index].1 = new_win_name.clone();
-                            self.show_popup = false;
-                            return Some(AppMsg::MappingChanged(x11_name, new_win_name));
-                        }
+                        self.mapping
+                            .set_mapping(x11_name.clone(), new_win_name.clone());
+                        self.mappings_list[self.selected_index].1 = new_win_name.clone();
+                        self.show_popup = false;
+                        return Some(AppMsg::MappingChanged(x11_name, new_win_name));
+                    }
                     self.show_popup = false;
                     None
                 }
@@ -187,24 +189,10 @@ impl Component for MappingEditorState {
             "Mapping Editor"
         };
 
-        let border_color = if self.show_popup {
-            Color::Yellow
-        } else if is_focused {
-            Color::Rgb(118, 227, 73)
-        } else {
-            Color::Gray
-        };
-        let border_type = if is_focused {
-            BorderType::Thick
-        } else {
-            BorderType::Plain
-        };
-
-        let block = Block::default()
-            .title(title)
-            .borders(Borders::ALL)
-            .border_type(border_type)
-            .border_style(Style::default().fg(border_color));
+        let mut block = focused_block(title, is_focused);
+        if self.show_popup {
+            block = block.border_style(Style::default().fg(Color::Yellow));
+        }
 
         let inner_area = block.inner(chunks[0]);
         block.render(chunks[0], buf);
@@ -236,11 +224,7 @@ impl Component for MappingEditorState {
                 // - Green: Valid fallback (Normal)
 
                 let source_color = if exists {
-                    if is_normal {
-                        Color::Green
-                    } else {
-                        Color::Cyan
-                    }
+                    if is_normal { Color::Green } else { Color::Cyan }
                 } else {
                     Color::Red
                 };
