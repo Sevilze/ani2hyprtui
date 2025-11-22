@@ -5,6 +5,7 @@ mod event;
 mod model;
 pub mod pipeline;
 mod pipeline_worker;
+mod widgets;
 
 fn main() {
     let picker = ratatui_image::picker::Picker::from_query_stdio().unwrap_or_else(|e| {
