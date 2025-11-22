@@ -190,11 +190,7 @@ impl AniParser {
 
     fn read_anih_header(cursor: &mut Cursor<&[u8]>, data: &[u8]) -> Result<AnihHeader> {
         // Find anih chunk
-        let (_, size, _) = Self::read_expected_chunk(cursor, data, &[HEADER_CHUNK])?;
-
-        if size != 36 {
-            bail!("Invalid anih header size");
-        }
+        let (_, _size, _) = Self::read_expected_chunk(cursor, data, &[HEADER_CHUNK])?;
 
         Ok(AnihHeader {
             size: cursor.read_u32::<LittleEndian>()?,
