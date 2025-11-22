@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release & Update AUR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: Install Packaging Tools
+        run: |
+          cargo install cargo-deb
+          cargo install cargo-generate-rpm
+
+      - name: Build Binary
+        run: cargo build --release --verbose
+
+      - name: Build Packages
+        run: |
+          cargo deb
+          cargo generate-rpm
+
+      - name: Prepare Artifacts
+        run: |
+          mkdir -p dist
+          cp target/release/ani2hyprtui dist/
+          cp target/debian/*.deb dist/
+          cp target/generate-rpm/*.rpm dist/
+          cp README.md dist/
+          cp LICENSE dist/
+
+          cd dist
+          tar -czvf ../ani2hyprtui-x86_64-unknown-linux-gnu.tar.gz ani2hyprtui README.md LICENSE
+          cd ..
+
+          echo "SHA256=$(sha256sum ani2hyprtui-x86_64-unknown-linux-gnu.tar.gz | awk '{print $1}')" >> $GITHUB_ENV
+          echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ani2hyprtui-x86_64-unknown-linux-gnu.tar.gz
+            target/debian/*.deb
+            target/generate-rpm/*.rpm
+          generate_release_notes: true
+      - name: Update AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v2.2.5
+        with:
+          pkgname: ani2hyprtui-bin
+          pkgbuild: ./PKGBUILD
+          commit_username: Sevilze
+          commit_email: sevilzcubing@gmail.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to v${{ env.VERSION }}"
+          force_push: false
+        env:
+          PRE_INSTALL_SCRIPT: |
+            sed -i "s/^pkgver=.*/pkgver=${{ env.VERSION }}/" PKGBUILD
+            sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+            sed -i "s/^sha256sums=.*/sha256sums=('${{ env.SHA256 }}')/" PKGBUILD
+            cat PKGBUILD

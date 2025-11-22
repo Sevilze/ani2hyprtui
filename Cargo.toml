@@ -3,6 +3,33 @@ name = "ani2hyprtui"
 version = "0.1.0"
 edition = "2024"
 
+description = "A TUI tool to convert animated cursors to Hyprcursor format"
+repository = "https://github.com/Sevilze/ani2hyprtui"
+license = "GPL-3.0"
+keywords = ["cursor", "hyprland", "tui", "converter"]
+categories = ["command-line-utilities"]
+
+[package.metadata.deb]
+name = "ani2hypr"
+maintainer = "Sevilze <sevilzcubing@gmail.com>"
+copyright = "2025, Sevilze <sevilzcubing@gmail.com>"
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/ani2hyprtui", "usr/bin/ani2hypr", "755"],
+    ["README.md", "usr/share/doc/ani2hypr/README.md", "644"],
+    ["LICENSE", "usr/share/doc/ani2hypr/LICENSE", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "ani2hypr"
+assets = [
+    { source = "target/release/ani2hyprtui", dest = "/usr/bin/ani2hypr", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/ani2hypr/README.md", mode = "644" },
+    { source = "LICENSE", dest = "/usr/share/licenses/ani2hypr/LICENSE", mode = "644" },
+]
+
 [dependencies]
 anyhow = "1"
 crossbeam-channel = "0.5"
