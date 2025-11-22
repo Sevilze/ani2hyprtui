@@ -67,6 +67,7 @@ jobs:
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: "Update to v${{ env.VERSION }}"
           force_push: false
+          ssh_keyscan_types: rsa,ecdsa,ed25519
         env:
           PRE_INSTALL_SCRIPT: |
             sed -i "s/^pkgver=.*/pkgver=${{ env.VERSION }}/" PKGBUILD
