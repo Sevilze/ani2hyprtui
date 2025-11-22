@@ -94,9 +94,6 @@ impl Component for RunnerState {
         None
     }
 
-
-    fn render(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {
-
     fn render(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {
         let block = focused_block("Pipeline Runner", is_focused);
         let inner = block.inner(area);
