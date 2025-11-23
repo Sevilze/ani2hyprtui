@@ -28,10 +28,52 @@ To build `ani2hyprtui`, you need a working Rust toolchain (Cargo).
     ```
 
 3. **Run the binary**:
-
+   
     ```bash
     ./target/release/ani2hyprtui
     ```
+
+### Arch Linux (AUR)
+
+```bash
+paru -S ani2hyprtui-bin
+```
+
+Or using yay:
+
+```bash
+yay -S ani2hyprtui-bin
+```
+
+### Debian / Ubuntu
+
+Download the `.deb` file from the [Releases](https://github.com/Sevilze/ani2hyprtui/releases) page and install it:
+
+```bash
+sudo dpkg -i ani2hypr_*.deb
+sudo apt-get install -f  # Fix dependencies if needed
+```
+
+### Fedora / Red Hat
+
+Download the `.rpm` file from the [Releases](https://github.com/Sevilze/ani2hyprtui/releases) page and install it:
+
+```bash
+sudo rpm -i ani2hypr-*.rpm
+```
+
+### Nix Installation
+
+```bash
+nix run github:Sevilze/ani2hyprtui/latest
+nix profile install github:Sevilze/ani2hyprtui/latest
+```
+
+Or enter a development shell (uses main branch by default):
+
+```bash
+nix develop github:Sevilze/ani2hyprtui
+```
 
 ## Usage Guide
 
