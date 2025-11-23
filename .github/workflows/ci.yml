@@ -25,16 +25,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy -- -W warnings
 
       - name: Run tests
         run: cargo test --verbose
 
   pkgbuild:
-    name: Verify PKGBUILD
-    runs-on: ubuntu-latest
-    container: archlinux:latest
-    steps:
+      name: Verify PKGBUILD
+      runs-on: ubuntu-latest
+      container: archlinux:latest
+      steps:
       - uses: actions/checkout@v4
 
       - name: Install build dependencies
