@@ -4,7 +4,7 @@ use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
     style::{Color, Style},
-    text::{Line, Span},
+    text::Line,
     widgets::{Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::{StatefulImage, picker::Picker, protocol::StatefulProtocol};
@@ -47,11 +47,8 @@ impl PreviewState {
         let img = image::open(path).ok()?;
         let (w, h) = img.dimensions();
 
-        // Canvas size
         let (canvas_w, canvas_h) = target_size;
 
-        // Determine scale factor. We want to make it big but fit.
-        // e.g. 32x32 -> 256x256 (x8)
         let scale = (canvas_w as f32 / w as f32).min(canvas_h as f32 / h as f32);
 
         let new_w = (w as f32 * scale) as u32;
@@ -109,17 +106,12 @@ impl PreviewState {
         }
 
         // Draw hotspot
-        // Hotspot is in original coordinates. Map to new coordinates.
-        // We want to draw a box AROUND the pixel.
-        // Pixel at (x, y) starts at (x*scale, y*scale) and has size scale*scale.
         let hx = (hotspot.0 as f32 * scale) + offset_x as f32;
         let hy = (hotspot.1 as f32 * scale) + offset_y as f32;
 
         let color = Rgba([255, 0, 0, 255]); // Red
 
         // Draw box
-        // We subtract 1.0 from the end coordinates to ensure we stay INSIDE the pixel block
-        // and don't overflow into the next pixel.
         let box_w = scale - 1.0;
         let box_h = scale - 1.0;
 
@@ -169,7 +161,6 @@ impl PreviewState {
             .map(|f| f.png_path.to_string_lossy().to_string())
             .collect();
         self.image_cache.retain(|k, _| {
-            // Key format: path|WxH
             let path = k.split('|').next().unwrap_or("");
             !paths_to_remove.contains(path)
         });
@@ -180,7 +171,6 @@ impl PreviewState {
     }
 
     fn center_image_rect(area: Rect) -> Rect {
-        // If the area is too small, just return it
         if area.width == 0 || area.height == 0 {
             return area;
         }
@@ -188,13 +178,10 @@ impl PreviewState {
         let width = area.width as f32;
         let height = area.height as f32;
 
-        // Assume cell aspect ratio of 1:2 (width:height)
-        // So a square image takes 2x width units for x height units.
-        let image_aspect = 2.0;
+        let image_aspect = 2.2;
         let area_aspect = width / height;
 
         if area_aspect > image_aspect {
-            // Too wide: constrain width to match height * aspect
             let new_width = height * image_aspect;
             let offset_x = (width - new_width) / 2.0;
             Rect {
@@ -204,7 +191,6 @@ impl PreviewState {
                 height: area.height,
             }
         } else {
-            // Too tall: constrain height to match width / aspect
             let new_height = width / image_aspect;
             let offset_y = (height - new_height) / 2.0;
             Rect {
@@ -222,12 +208,19 @@ impl PreviewState {
         buf: &mut Buffer,
         _is_focused: bool,
         _playing: bool,
+        maximized: bool,
         data: Option<PreviewData>,
     ) {
-        let chunks = Layout::default()
-            .constraints([Constraint::Min(10), Constraint::Length(4)])
-            .direction(ratatui::layout::Direction::Vertical)
-            .split(area);
+        let chunks = if maximized {
+            Layout::default()
+                .constraints([Constraint::Percentage(100)])
+                .split(area)
+        } else {
+            Layout::default()
+                .constraints([Constraint::Min(10), Constraint::Length(1)])
+                .direction(ratatui::layout::Direction::Vertical)
+                .split(area)
+        };
 
         let image_area = Self::center_image_rect(chunks[0]);
 
@@ -245,35 +238,59 @@ impl PreviewState {
             self.ensure_image_cached(path, *hotspot, *size, (target_w, target_h));
         }
 
-        if let Some((path, hotspot, size, cursor, variant, frame, frame_ix)) = data {
+        if let Some((path, hotspot, size, _, variant, frame, frame_ix)) = data {
             let key = format!("{}|{}x{}", path, target_w, target_h);
             if let Some(proto) = self.image_cache.get_mut(&key) {
                 StatefulImage::default().render(image_area, buf, proto);
 
-                let info_text = format!(
-                    "Frame: {}/{} | Delay: {}ms | Hotspot: ({}, {}) | Size: {}x{}",
-                    frame_ix + 1,
-                    variant.frames.len(),
-                    frame.delay_ms,
-                    hotspot.0,
-                    hotspot.1,
-                    size,
-                    size
-                );
+                let (text_content, text_area) = if maximized {
+                    let lines = vec![
+                        Line::from(format!("Frame: {}/{}", frame_ix + 1, variant.frames.len())),
+                        Line::from(format!("Delay: {}ms", frame.delay_ms)),
+                        Line::from(format!("Hotspot: ({}, {})", hotspot.0, hotspot.1)),
+                        Line::from(format!("Size: {}x{}", size, size)),
+                    ];
+                    
+                    let height = lines.len() as u16;
+                    let width = lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16 + 2;
 
-                Paragraph::new(vec![
-                    Line::from(info_text),
-                    Line::from(Span::styled(
-                        cursor.info(),
-                        Style::default().fg(Color::Cyan),
-                    )),
-                ])
-                .wrap(ratatui::widgets::Wrap { trim: true })
-                .block(
-                    ratatui::widgets::Block::default()
-                        .padding(ratatui::widgets::Padding::horizontal(1)),
-                )
-                .render(chunks[1], buf);
+                    let centered_y = area.y + (area.height.saturating_sub(height)) / 2;
+
+                    (
+                        lines,
+                        Rect::new(
+                            area.x,
+                            centered_y, 
+                            width,
+                            height,
+                        )
+                    )
+                } else {
+                    let info_text = format!(
+                        "Frame: {}/{} | Delay: {}ms | Hotspot: ({}, {}) | Size: {}x{}",
+                        frame_ix + 1,
+                        variant.frames.len(),
+                        frame.delay_ms,
+                        hotspot.0,
+                        hotspot.1,
+                        size,
+                        size
+                    );
+                    (vec![Line::from(info_text)], chunks[1])
+                };
+
+                let paragraph = Paragraph::new(text_content);
+                
+                if maximized {
+                    paragraph
+                        .style(Style::default().bg(Color::Black))
+                        .block(ratatui::widgets::Block::default().padding(ratatui::widgets::Padding::left(1)))
+                        .render(text_area, buf);
+                } else {
+                    paragraph
+                        .block(ratatui::widgets::Block::default().padding(ratatui::widgets::Padding::left(3)))
+                        .render(text_area, buf);
+                }
             } else {
                 Paragraph::new("Loading image...").render(area, buf);
             }

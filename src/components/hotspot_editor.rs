@@ -32,6 +32,7 @@ pub struct HotspotEditorState {
     // Animation timing
     pub last_tick: Instant,
     pub accumulator: Duration,
+    pub maximized: bool,
 }
 
 impl Default for HotspotEditorState {
@@ -55,6 +56,7 @@ impl HotspotEditorState {
             preview: PreviewState::new(picker_arc),
             last_tick: Instant::now(),
             accumulator: Duration::ZERO,
+            maximized: false,
         }
     }
 
@@ -160,11 +162,16 @@ impl HotspotEditorState {
     fn handle_key(&mut self, key: KeyEvent) -> Option<AppMsg> {
         match key.code {
             KeyCode::Char(' ') => {
-                self.playing = !self.playing;
-                Some(AppMsg::LogMessage(format!(
-                    "Animation {}",
-                    if self.playing { "playing" } else { "paused" }
-                )))
+                if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                    self.maximized = !self.maximized;
+                    None
+                } else {
+                    self.playing = !self.playing;
+                    Some(AppMsg::LogMessage(format!(
+                        "Animation {}",
+                        if self.playing { "playing" } else { "paused" }
+                    )))
+                }
             }
             KeyCode::Left => {
                 self.move_hotspot(-1, 0);
@@ -362,12 +369,21 @@ impl Component for HotspotEditorState {
         let inner = block.inner(area);
         block.render(area, buf);
 
-        let chunks = Layout::default()
-            .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-            .direction(ratatui::layout::Direction::Horizontal)
-            .split(inner);
+        let chunks = if self.maximized {
+            Layout::default()
+                .constraints([Constraint::Percentage(0), Constraint::Percentage(100)])
+                .direction(ratatui::layout::Direction::Horizontal)
+                .split(inner)
+        } else {
+            Layout::default()
+                .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+                .direction(ratatui::layout::Direction::Horizontal)
+                .split(inner)
+        };
 
-        self.render_cursor_list(chunks[0], buf, false);
+        if !self.maximized {
+            self.render_cursor_list(chunks[0], buf, false);
+        }
 
         let path_string = if let Some(cursor) = self.cursors.get(self.selected_cursor) {
             if let Some(variant) = cursor.variants.get(self.selected_variant) {
@@ -407,6 +423,6 @@ impl Component for HotspotEditorState {
         };
 
         self.preview
-            .render(chunks[1], buf, is_focused, self.playing, data);
+            .render(chunks[1], buf, is_focused, self.playing, self.maximized, data);
     }
 }

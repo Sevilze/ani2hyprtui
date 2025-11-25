@@ -1,5 +1,11 @@
 # ani2hyprtui
 
+<div align="center">
+
+[![CI](https://github.com/Sevilze/ani2hyprtui/actions/workflows/ci.yml/badge.svg)](https://github.com/Sevilze/ani2hyprtui/actions/workflows/ci.yml) [![Release](https://github.com/Sevilze/ani2hyprtui/actions/workflows/release.yml/badge.svg)](https://github.com/Sevilze/ani2hyprtui/actions/workflows/release.yml)
+
+</div>
+
 **ani2hyprtui** is a robust, terminal-based user interface (TUI) tool designed to convert Windows cursor themes (animated `.ani` and static `.cur` files) into the Hyprcursor format. Built entirely in **Rust**, it provides a seamless and efficient conversion pipeline without relying on external legacy tools or dependencies.
 
 ## Features
@@ -28,7 +34,7 @@ To build `ani2hyprtui`, you need a working Rust toolchain (Cargo).
     ```
 
 3. **Run the binary**:
-   
+
     ```bash
     ./target/release/ani2hyprtui
     ```

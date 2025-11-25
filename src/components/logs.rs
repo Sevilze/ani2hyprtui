@@ -10,21 +10,28 @@ use ratatui::{
     widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
 };
 
-#[derive(Default)]
+#[derive(Debug)]
 pub struct LogsState {
     pub logs: Vec<String>,
     scroll_state: ScrollbarState,
     scroll_offset: u16,
+    stick_to_bottom: bool,
+}
+
+impl Default for LogsState {
+    fn default() -> Self {
+        Self {
+            logs: Vec::new(),
+            scroll_state: ScrollbarState::default(),
+            scroll_offset: 0,
+            stick_to_bottom: true,
+        }
+    }
 }
 
 impl LogsState {
     pub fn add_log(&mut self, message: String) {
         self.logs.push(message);
-        // Only auto-scroll if already near bottom
-        let total = self.logs.len();
-        if total <= 1 || self.scroll_offset as usize + 5 >= total {
-            self.scroll_offset = total as u16;
-        }
     }
 }
 
@@ -39,6 +46,7 @@ impl Component for LogsState {
             }
             AppMsg::Key(key) => match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
+                    self.stick_to_bottom = false;
                     self.scroll_offset = self.scroll_offset.saturating_sub(1);
                     self.scroll_state = self.scroll_state.position(self.scroll_offset as usize);
                 }
@@ -47,6 +55,7 @@ impl Component for LogsState {
                     self.scroll_state = self.scroll_state.position(self.scroll_offset as usize);
                 }
                 KeyCode::PageUp => {
+                    self.stick_to_bottom = false;
                     self.scroll_offset = self.scroll_offset.saturating_sub(10);
                     self.scroll_state = self.scroll_state.position(self.scroll_offset as usize);
                 }
@@ -89,14 +98,16 @@ impl Component for LogsState {
 
         self.scroll_state = self.scroll_state.content_length(total_height);
 
-        if self.scroll_offset as usize > max_scroll {
+        if self.stick_to_bottom {
             self.scroll_offset = max_scroll as u16;
+        } else if self.scroll_offset as usize > max_scroll {
+            self.scroll_offset = max_scroll as u16;
+            self.stick_to_bottom = true;
         }
 
-        let is_at_bottom = self.scroll_offset as usize >= max_scroll.saturating_sub(1);
-
-        if is_at_bottom {
-            self.scroll_offset = max_scroll as u16;
+        // If user manually scrolled to bottom, re-enable stickiness
+        if !self.stick_to_bottom && self.scroll_offset as usize >= max_scroll {
+            self.stick_to_bottom = true;
         }
 
         let styled_lines: Vec<Line> = wrapped_lines

@@ -10,6 +10,7 @@ use ratatui::{
     widgets::{List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
 };
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 pub struct FileBrowserState {
     pub current_dir: PathBuf,
@@ -18,6 +19,7 @@ pub struct FileBrowserState {
     pub list_state: ListState,
     pub scroll_state: ScrollbarState,
     pub tx: Option<Sender<AppMsg>>,
+    pub last_refresh: Instant,
 }
 
 impl Default for FileBrowserState {
@@ -30,6 +32,7 @@ impl Default for FileBrowserState {
             list_state: ListState::default(),
             scroll_state: ScrollbarState::default(),
             tx: None,
+            last_refresh: Instant::now(),
         };
         state.refresh_entries();
         if !state.entries.is_empty() {
@@ -106,8 +109,23 @@ impl FileBrowserState {
 
 impl Component for FileBrowserState {
     fn update(&mut self, msg: &AppMsg) -> Option<AppMsg> {
-        if let AppMsg::Key(key) = msg {
-            match key.code {
+        match msg {
+            AppMsg::Tick => {
+                if self.last_refresh.elapsed() >= Duration::from_secs(1) {
+                    self.refresh_entries();
+                    self.last_refresh = Instant::now();
+                    
+                    // Ensure selection is valid
+                    if let Some(selected) = self.list_state.selected()
+                        && selected >= self.entries.len()
+                    {
+                        let new_selected = self.entries.len().saturating_sub(1);
+                        self.list_state.select(Some(new_selected));
+                    }
+                }
+            }
+            AppMsg::Key(key) => {
+                match key.code {
                 KeyCode::Down | KeyCode::Char('j') => {
                     if self.entries.is_empty() {
                         return None;
@@ -157,15 +175,10 @@ impl Component for FileBrowserState {
                 _ => {}
             }
         }
+            _ => {}
+        }
         None
     }
-
-
-// ... imports
-
-// ... struct definition
-
-// ... impl Component
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {
         let items: Vec<ListItem> = self

@@ -21,6 +21,7 @@ use crate::components::{
 };
 use crate::config::Config;
 use crate::event::AppMsg;
+use crate::model::cursor;
 use crate::pipeline::cursor_io::{load_cursor_folder, load_cursor_folder_from_pngs};
 use crate::pipeline_worker::PipelineWorker;
 
@@ -188,71 +189,76 @@ impl App {
 
                 let show_mapping = self.runner.input_dir.is_some();
 
-                let constraints = if show_mapping {
-                    vec![
-                        Constraint::Percentage(25), // Left: File Browser, Runner, Overrides
-                        Constraint::Percentage(50), // Middle: Cursor Editor, Logs
-                        Constraint::Percentage(25), // Right: Mapping Editor
-                    ]
+                if self.cursor_editor.maximized {
+                    self.cursor_editor
+                        .render(main_chunks[0], f.buffer_mut(), true);
                 } else {
-                    vec![
-                        Constraint::Percentage(30), // Left
-                        Constraint::Percentage(70), // Middle
-                    ]
-                };
+                    let constraints = if show_mapping {
+                        vec![
+                            Constraint::Percentage(25), // Left: File Browser, Runner, Overrides
+                            Constraint::Percentage(50), // Middle: Cursor Editor, Logs
+                            Constraint::Percentage(25), // Right: Mapping Editor
+                        ]
+                    } else {
+                        vec![
+                            Constraint::Percentage(30), // Left
+                            Constraint::Percentage(70), // Middle
+                        ]
+                    };
 
-                let columns = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints(constraints)
-                    .split(main_chunks[0]);
+                    let columns = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints(constraints)
+                        .split(main_chunks[0]);
 
-                // Left Column
-                let left_chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Percentage(40), // File Browser
-                        Constraint::Percentage(20), // Runner
-                        Constraint::Percentage(40), // Overrides
-                    ])
-                    .split(columns[0]);
+                    // Left Column
+                    let left_chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Percentage(40), // File Browser
+                            Constraint::Percentage(20), // Runner
+                            Constraint::Percentage(40), // Overrides
+                        ])
+                        .split(columns[0]);
 
-                // Middle Column
-                let middle_chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Percentage(70), // Cursor Editor
-                        Constraint::Percentage(30), // Logs
-                    ])
-                    .split(columns[1]);
+                    // Middle Column
+                    let middle_chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Percentage(70), // Cursor Editor
+                            Constraint::Percentage(30), // Logs
+                        ])
+                        .split(columns[1]);
 
-                // Render components
-                self.file_browser.render(
-                    left_chunks[0],
-                    f.buffer_mut(),
-                    self.focus == Focus::FileBrowser,
-                );
-                self.runner
-                    .render(left_chunks[1], f.buffer_mut(), self.focus == Focus::Runner);
-                self.theme_overrides.render(
-                    left_chunks[2],
-                    f.buffer_mut(),
-                    self.focus == Focus::Overrides,
-                );
-
-                self.cursor_editor.render(
-                    middle_chunks[0],
-                    f.buffer_mut(),
-                    self.focus == Focus::Editor,
-                );
-                self.logs
-                    .render(middle_chunks[1], f.buffer_mut(), self.focus == Focus::Logs);
-
-                if show_mapping {
-                    self.mapping_editor.render(
-                        columns[2],
+                    // Render components
+                    self.file_browser.render(
+                        left_chunks[0],
                         f.buffer_mut(),
-                        self.focus == Focus::Mapping,
+                        self.focus == Focus::FileBrowser,
                     );
+                    self.runner
+                        .render(left_chunks[1], f.buffer_mut(), self.focus == Focus::Runner);
+                    self.theme_overrides.render(
+                        left_chunks[2],
+                        f.buffer_mut(),
+                        self.focus == Focus::Overrides,
+                    );
+
+                    self.cursor_editor.render(
+                        middle_chunks[0],
+                        f.buffer_mut(),
+                        self.focus == Focus::Editor,
+                    );
+                    self.logs
+                        .render(middle_chunks[1], f.buffer_mut(), self.focus == Focus::Logs);
+
+                    if show_mapping {
+                        self.mapping_editor.render(
+                            columns[2],
+                            f.buffer_mut(),
+                            self.focus == Focus::Mapping,
+                        );
+                    }
                 }
 
                 // Status bar
@@ -536,30 +542,35 @@ impl App {
                             cursors.len()
                         )));
 
-                        let converted_cursors: Vec<crate::model::cursor::CursorMeta> = cursors
+                        let mut converted_cursors: Vec<cursor::CursorMeta> = cursors
                             .into_iter()
-                            .map(|c| crate::model::cursor::CursorMeta {
-                                x11_name: c.x11_name,
-                                win_names: c.win_names,
-                                variants: c
+                            .map(|c| {
+                                let mut variants: Vec<cursor::SizeVariant> = c
                                     .variants
                                     .into_iter()
-                                    .map(|v| crate::model::cursor::SizeVariant {
+                                    .map(|v| cursor::SizeVariant {
                                         size: v.size,
                                         frames: v
                                             .frames
                                             .into_iter()
-                                            .map(|f| crate::model::cursor::Frame {
+                                            .map(|f| cursor::Frame {
                                                 png_path: f.png_path,
                                                 delay_ms: f.delay_ms,
                                             })
                                             .collect(),
                                         hotspot: v.hotspot,
                                     })
-                                    .collect(),
-                                src_cursor_path: c.src_cursor_path,
+                                    .collect();
+                                variants.sort_by_key(|v| v.size);
+
+                                cursor::CursorMeta {
+                                    x11_name: c.x11_name,
+                                    variants,
+                                }
                             })
                             .collect();
+
+                        converted_cursors.sort_by(|a, b| a.x11_name.cmp(&b.x11_name));
 
                         if !converted_cursors.is_empty() {
                             let _ = self.tx.send(AppMsg::LogMessage(format!(
