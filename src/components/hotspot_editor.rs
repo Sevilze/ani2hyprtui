@@ -9,7 +9,10 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
+    widgets::{
+        List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
+        Widget,
+    },
 };
 use ratatui_image::picker::Picker;
 use std::collections::HashSet;
@@ -153,8 +156,8 @@ impl HotspotEditorState {
             if variant.hotspot != (hx, hy) {
                 variant.hotspot = (hx, hy);
                 self.modified_hotspots.insert(cursor.x11_name.clone());
-                // Invalidate cache for all frames of this variant to redraw hotspot
-                self.preview.invalidate_cache_for_variant(variant);
+                // Only invalidate protocol cache
+                self.preview.invalidate_protocol_for_variant(variant);
             }
         }
     }
@@ -162,7 +165,10 @@ impl HotspotEditorState {
     fn handle_key(&mut self, key: KeyEvent) -> Option<AppMsg> {
         match key.code {
             KeyCode::Char(' ') => {
-                if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+                {
                     self.maximized = !self.maximized;
                     None
                 } else {
@@ -422,7 +428,13 @@ impl Component for HotspotEditorState {
             None
         };
 
-        self.preview
-            .render(chunks[1], buf, is_focused, self.playing, self.maximized, data);
+        self.preview.render(
+            chunks[1],
+            buf,
+            is_focused,
+            self.playing,
+            self.maximized,
+            data,
+        );
     }
 }
