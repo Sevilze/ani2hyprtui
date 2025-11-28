@@ -77,6 +77,14 @@ jobs:
             target/debian/*.deb
             target/generate-rpm/*.rpm
           generate_release_notes: true
+
+      - name: Update PKGBUILD
+        run: |
+          sed -i "s/^pkgver=.*/pkgver=${{ env.VERSION }}/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          sed -i "s/^sha256sums=.*/sha256sums=('${{ env.SHA256 }}')/" PKGBUILD
+          cat PKGBUILD
+
       - name: Update AUR
         uses: KSXGitHub/github-actions-deploy-aur@v2.2.5
         with:
@@ -88,12 +96,6 @@ jobs:
           commit_message: "Update to v${{ env.VERSION }}"
           force_push: false
           ssh_keyscan_types: rsa,ecdsa,ed25519
-        env:
-          PRE_INSTALL_SCRIPT: |
-            sed -i "s/^pkgver=.*/pkgver=${{ env.VERSION }}/" PKGBUILD
-            sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
-            sed -i "s/^sha256sums=.*/sha256sums=('${{ env.SHA256 }}')/" PKGBUILD
-            cat PKGBUILD
 
       - name: Update 'latest' tag
         run: |
