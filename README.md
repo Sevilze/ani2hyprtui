@@ -13,8 +13,10 @@
 * **Native Conversion**: Reads `.ani` and `.cur` files directly and produces Hyprcursor-compatible output.
 * **Interactive TUI**: A rich terminal interface for managing the conversion process.
 * **Visual Hotspot Editor**: Fine-tune cursor hotspots with a visual preview and real-time animation.
-* **Mapping System**: Intelligent remapping of Windows cursor names to X11/Hyprland standards.
+* **Mapping System**: Intelligent remapping of Windows cursor names to X11/Hyprland standards with **automatic fuzzy matching**. Users are also able to define these mappings manually within the application.
+* **Theme Customization**: Customize the output theme name and select specific cursor sizes to generate.
 * **Batch Processing**: Convert entire directories of cursors in one go.
+* **UI Theming**: Choose from multiple built-in color themes for the application interface.
 
 ## Installation
 
@@ -118,9 +120,29 @@ The Runner is the control center for the conversion process. It displays the cur
 
 ---
 
-### 3. Mapping Editor
+### 3. Theme Overrides
+
+The Theme Overrides component allows you to customize the output configuration before conversion.
+
+**Features:**
+
+* **Output Name**: Specify a custom name for the generated theme (defaults to the input folder name).
+* **Sizes**: Select which cursor sizes to generate (e.g., 24, 32, 48).
+
+**Controls:**
+
+* `Up` / `Down`: Navigate between fields.
+* **Output Name**: Type to edit.
+* **Sizes**: `Enter` to toggle a size on/off.
+
+---
+
+### 4. Mapping Editor
 
 Windows and Linux (X11/Hyprland) use different naming conventions for cursors (e.g., "arrow" vs "left_ptr"). The Mapping Editor allows you to define how these names translate.
+
+**Automatic Matching:**
+When you select an input directory, the application automatically attempts to match Windows files to X11 names using a **fuzzy matching algorithm**. It prioritizes exact matches, then prefix matches, and finally substring matches.
 
 **Controls:**
 
@@ -133,7 +155,7 @@ Windows and Linux (X11/Hyprland) use different naming conventions for cursors (e
 
 ---
 
-### 4. Hotspot Editor
+### 5. Hotspot Editor
 
 The Hotspot Editor is a powerful tool for visually adjusting the "hotspot" (the active pixel) of a cursor. Incorrect hotspots make cursors feel "off" or inaccurate.
 
@@ -158,7 +180,7 @@ The Hotspot Editor is a powerful tool for visually adjusting the "hotspot" (the 
 
 ---
 
-### 5. Logs
+### 6. Logs
 
 The Logs component provides real-time feedback on the application's operations. It is essential for troubleshooting and verifying that actions (like saving mappings or converting files) have completed successfully.
 
@@ -166,6 +188,18 @@ The Logs component provides real-time feedback on the application's operations. 
 
 * `j` / `k`: Scroll the log view up and down.
 * `PageUp` / `PageDown`: Scroll by pages.
+
+---
+
+### 7. Settings
+
+The Settings component allows you to customize the look and feel of `ani2hyprtui` itself.
+
+**Controls:**
+
+* `Up` / `Down` / `j` / `k`: Select a theme.
+* `Enter` / `Space`: Apply the selected theme.
+* `Left` / `Right` / `h` / `l`: Quick switch between themes.
 
 ## Troubleshooting
 
