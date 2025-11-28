@@ -8,6 +8,12 @@ mod pipeline_worker;
 mod widgets;
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.contains(&"--version".to_string()) {
+        println!("ani2hyprtui {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
     let picker = ratatui_image::picker::Picker::from_query_stdio().unwrap_or_else(|e| {
         eprintln!("Failed to query terminal ({}), using fallback", e);
         ratatui_image::picker::Picker::from_fontsize((8, 16))
