@@ -341,14 +341,16 @@ pub static CURRENT_THEME: LazyLock<RwLock<ThemeType>> =
     LazyLock::new(|| RwLock::new(ThemeType::CatppuccinMocha));
 
 pub fn get_theme() -> Theme {
-    let theme_type = *CURRENT_THEME.read().unwrap();
+    let theme_type = *CURRENT_THEME.read().unwrap_or_else(|e| e.into_inner());
     Theme::from_type(theme_type)
 }
 
 pub fn set_theme(theme_type: ThemeType) {
-    *CURRENT_THEME.write().unwrap() = theme_type;
+    if let Ok(mut guard) = CURRENT_THEME.write() {
+        *guard = theme_type;
+    }
 }
 
 pub fn get_current_theme_type() -> ThemeType {
-    *CURRENT_THEME.read().unwrap()
+    *CURRENT_THEME.read().unwrap_or_else(|e| e.into_inner())
 }

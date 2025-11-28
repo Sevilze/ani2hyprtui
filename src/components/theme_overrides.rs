@@ -1,15 +1,14 @@
 use super::Component;
 use crate::event::AppMsg;
 use crate::widgets::common::focused_block;
+use crate::widgets::theme::get_theme;
 use crossterm::event::KeyCode;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::Span,
-    widgets::{
-        Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
-    },
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget},
 };
 use std::collections::HashSet;
 
@@ -68,7 +67,10 @@ impl Component for ThemeOverridesState {
                     }
                 }
                 KeyCode::Char(c) => {
-                    self.output_name.push(c);
+                    // Allow alphanumeric, dash, underscore, and space
+                    if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
+                        self.output_name.push(c);
+                    }
                 }
                 KeyCode::Backspace => {
                     self.output_name.pop();
@@ -80,6 +82,7 @@ impl Component for ThemeOverridesState {
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {
+        let theme = get_theme();
         let block = focused_block("Theme Overrides", is_focused);
 
         let inner = block.inner(area);
@@ -95,9 +98,9 @@ impl Component for ThemeOverridesState {
 
         // Output Name Field
         let name_style = if is_focused {
-            Style::default().fg(Color::Yellow)
+            Style::default().fg(theme.text_highlight)
         } else {
-            Style::default()
+            Style::default().fg(theme.text_primary)
         };
         let name_block = Block::default()
             .title("Output Name")
@@ -132,9 +135,11 @@ impl Component for ThemeOverridesState {
                 let content = format!("{} {}x{}", checkbox, size, size);
 
                 let style = if i == self.selector_index && is_focused {
-                    Style::default().fg(Color::Black).bg(Color::Yellow)
-                } else {
                     Style::default()
+                        .fg(theme.background)
+                        .bg(theme.text_highlight)
+                } else {
+                    Style::default().fg(theme.text_primary)
                 };
 
                 ListItem::new(Span::styled(content, style))

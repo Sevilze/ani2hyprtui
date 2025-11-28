@@ -13,6 +13,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::{io, thread, time::Duration};
 
 use crate::components::{
@@ -213,7 +214,7 @@ impl App {
                         ])
                         .split(columns[1]);
 
-                    // Right Columnss
+                    // Right Column
                     let right_chunks = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([
@@ -388,15 +389,7 @@ impl App {
                     self.runner.input_dir.clone(),
                     self.runner.output_dir.clone(),
                 ) {
-                    let theme_name = if !self.theme_overrides.output_name.trim().is_empty() {
-                        self.theme_overrides.output_name.trim().to_string()
-                    } else {
-                        input_dir
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("ConvertedCursors")
-                            .to_string()
-                    };
+                    let theme_name = self.get_theme_name(&input_dir);
                     let mapping = self.mapping_editor.mapping.clone();
                     let selected_sizes: Vec<u32> = self
                         .theme_overrides
@@ -467,15 +460,7 @@ impl App {
                     self.runner.input_dir.clone(),
                     self.runner.output_dir.clone(),
                 ) {
-                    let theme_name = if !self.theme_overrides.output_name.trim().is_empty() {
-                        self.theme_overrides.output_name.trim().to_string()
-                    } else {
-                        input_dir
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("ConvertedCursors")
-                            .to_string()
-                    };
+                    let theme_name = self.get_theme_name(&input_dir);
                     let mapping = self.mapping_editor.mapping.clone();
 
                     if self.modified_cursors.is_empty() {
@@ -616,6 +601,18 @@ impl App {
                 self.theme_overrides.update(msg);
                 self.mapping_editor.update(msg);
             }
+        }
+    }
+
+    fn get_theme_name(&self, input_dir: &Path) -> String {
+        if !self.theme_overrides.output_name.trim().is_empty() {
+            self.theme_overrides.output_name.trim().to_string()
+        } else {
+            input_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("ConvertedCursors")
+                .to_string()
         }
     }
 

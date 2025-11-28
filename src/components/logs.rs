@@ -1,11 +1,12 @@
 use super::Component;
 use crate::event::AppMsg;
 use crate::widgets::common::focused_block;
+use crate::widgets::theme::get_theme;
 use crossterm::event::KeyCode;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
 };
@@ -113,12 +114,13 @@ impl Component for LogsState {
         let styled_lines: Vec<Line> = wrapped_lines
             .iter()
             .map(|line| {
+                let theme = get_theme();
                 let style = if line.contains("ERROR") {
-                    Style::default().fg(Color::Red)
+                    Style::default().fg(theme.status_failed)
                 } else if line.contains("completed") || line.contains("Success") {
-                    Style::default().fg(Color::Green)
+                    Style::default().fg(theme.status_completed)
                 } else {
-                    Style::default()
+                    Style::default().fg(theme.text_primary)
                 };
                 Line::from(Span::styled(line.clone(), style))
             })

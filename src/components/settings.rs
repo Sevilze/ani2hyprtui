@@ -138,8 +138,10 @@ impl Component for SettingsState {
                 let marker = if is_current { "●" } else { " " };
                 let name = t.name();
                 // Truncate long names with ellipsis
-                let display_name = if name.len() > max_name_len {
-                    format!("{}…", &name[..max_name_len.saturating_sub(1)])
+                let display_name = if name.chars().count() > max_name_len {
+                    let truncated: String =
+                        name.chars().take(max_name_len.saturating_sub(1)).collect();
+                    format!("{}…", truncated)
                 } else {
                     name.to_string()
                 };

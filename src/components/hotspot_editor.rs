@@ -3,11 +3,12 @@ use super::preview::PreviewState;
 use crate::event::AppMsg;
 use crate::model::cursor::CursorMeta;
 use crate::widgets::common::focused_block;
+use crate::widgets::theme::get_theme;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{
         List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
@@ -234,6 +235,7 @@ impl HotspotEditorState {
     }
 
     fn render_cursor_list(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {
+        let theme = get_theme();
         let items: Vec<ListItem> = self
             .cursors
             .iter()
@@ -241,11 +243,11 @@ impl HotspotEditorState {
             .map(|(i, cursor)| {
                 let style = if i == self.selected_cursor {
                     Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Green)
+                        .fg(theme.background)
+                        .bg(theme.status_completed)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default()
+                    Style::default().fg(theme.text_primary)
                 };
 
                 let marker = if self.modified_hotspots.contains(&cursor.x11_name) {
@@ -259,7 +261,7 @@ impl HotspotEditorState {
                     Span::raw(" "),
                     Span::styled(
                         format!("({})", cursor.variants.len()),
-                        style.fg(Color::DarkGray),
+                        style.fg(theme.text_secondary),
                     ),
                 ]))
             })
@@ -272,8 +274,8 @@ impl HotspotEditorState {
 
         let list = List::new(items).highlight_style(
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Green)
+                .fg(theme.background)
+                .bg(theme.status_completed)
                 .add_modifier(Modifier::BOLD),
         );
 

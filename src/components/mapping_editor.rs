@@ -92,6 +92,7 @@ pub struct MappingEditorState {
     pub list_state: ListState,
     pub scroll_state: ScrollbarState,
     pub popup_scroll_state: ScrollbarState,
+    default_mapping: CursorMapping,
 }
 
 impl MappingEditorState {
@@ -114,6 +115,7 @@ impl MappingEditorState {
             list_state: ListState::default(),
             scroll_state: ScrollbarState::default(),
             popup_scroll_state: ScrollbarState::default(),
+            default_mapping: CursorMapping::default(),
         }
     }
 
@@ -122,10 +124,9 @@ impl MappingEditorState {
         self.available_sources.sort();
 
         if !self.available_sources.is_empty() {
-            let default_mapping = CursorMapping::default();
-
             for (x11_name, win_name) in &mut self.mappings_list {
-                let standard_win_name = default_mapping
+                let standard_win_name = self
+                    .default_mapping
                     .x11_to_win
                     .get(x11_name)
                     .cloned()
@@ -306,8 +307,6 @@ impl Component for MappingEditorState {
             return;
         }
 
-        let default_mapping = CursorMapping::default();
-
         let items: Vec<ListItem> = self
             .mappings_list
             .iter()
@@ -324,7 +323,8 @@ impl Component for MappingEditorState {
 
                 let display_win = win_name;
 
-                let standard_mapping = default_mapping
+                let standard_mapping = self
+                    .default_mapping
                     .x11_to_win
                     .get(x11_name)
                     .cloned()

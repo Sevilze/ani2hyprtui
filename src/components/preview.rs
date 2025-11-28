@@ -3,7 +3,7 @@ use imageproc::drawing::draw_line_segment_mut;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     text::Line,
     widgets::{Paragraph, StatefulWidget, Widget},
 };
@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::model::cursor::{CursorMeta, Frame, SizeVariant};
+use crate::widgets::theme::get_theme;
 
 pub type PreviewData<'a> = (
     &'a str,
@@ -303,11 +304,12 @@ impl PreviewState {
                     (vec![Line::from(info_text)], chunks[1])
                 };
 
+                let theme = get_theme();
                 let paragraph = Paragraph::new(text_content);
 
                 if maximized {
                     paragraph
-                        .style(Style::default().bg(Color::Black))
+                        .style(Style::default().bg(theme.background))
                         .block(
                             ratatui::widgets::Block::default()
                                 .padding(ratatui::widgets::Padding::left(1)),

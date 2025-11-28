@@ -1,11 +1,12 @@
 use super::Component;
 use crate::event::AppMsg;
 use crate::widgets::common::focused_block;
+use crate::widgets::theme::get_theme;
 use crossbeam_channel::Sender;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
@@ -99,6 +100,8 @@ impl Component for RunnerState {
         let inner = block.inner(area);
         block.render(area, buf);
 
+        let theme = get_theme();
+
         let status_text = match &self.status {
             PipelineStatus::Idle => "Status: Idle",
             PipelineStatus::Running => "Status: Running",
@@ -109,10 +112,10 @@ impl Component for RunnerState {
         let mut status_lines = vec![Line::from(Span::styled(
             status_text,
             Style::default().fg(match &self.status {
-                PipelineStatus::Idle => Color::Yellow,
-                PipelineStatus::Running => Color::Blue,
-                PipelineStatus::Completed(_) => Color::Green,
-                PipelineStatus::Failed(_) => Color::Red,
+                PipelineStatus::Idle => theme.status_idle,
+                PipelineStatus::Running => theme.status_running,
+                PipelineStatus::Completed(_) => theme.status_completed,
+                PipelineStatus::Failed(_) => theme.status_failed,
             }),
         ))];
 

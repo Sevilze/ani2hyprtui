@@ -1,12 +1,13 @@
 use super::Component;
 use crate::event::AppMsg;
 use crate::widgets::common::focused_block;
+use crate::widgets::theme::get_theme;
 use crossbeam_channel::Sender;
 use crossterm::event::KeyCode;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::{List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
 };
 use std::path::PathBuf;
@@ -181,13 +182,15 @@ impl Component for FileBrowserState {
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {
+        let theme = get_theme();
+
         let items: Vec<ListItem> = self
             .entries
             .iter()
             .map(|entry| {
                 let icon = if entry.is_dir() { "📁" } else { "📄" };
                 let name = entry.file_name().unwrap_or_default().to_string_lossy();
-                ListItem::new(format!("{} {}", icon, name))
+                ListItem::new(format!("{} {}", icon, name)).style(Style::default().fg(theme.text_primary))
             })
             .collect();
 
@@ -198,7 +201,7 @@ impl Component for FileBrowserState {
         let list = List::new(items)
             .highlight_style(
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(theme.text_highlight)
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol(">> ");
