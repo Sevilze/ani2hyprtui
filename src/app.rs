@@ -9,7 +9,7 @@ use ratatui::{
     Terminal,
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
-    style::{Color, Style},
+    style::Style,
     widgets::Paragraph,
 };
 use std::collections::{HashMap, HashSet};
@@ -17,13 +17,15 @@ use std::{io, thread, time::Duration};
 
 use crate::components::{
     Component, file_browser::FileBrowserState, hotspot_editor::HotspotEditorState, logs::LogsState,
-    mapping_editor::MappingEditorState, runner::RunnerState, theme_overrides::ThemeOverridesState,
+    mapping_editor::MappingEditorState, runner::RunnerState, settings::SettingsState,
+    theme_overrides::ThemeOverridesState,
 };
 use crate::config::Config;
 use crate::event::AppMsg;
 use crate::model::cursor;
 use crate::pipeline::cursor_io::{load_cursor_folder, load_cursor_folder_from_pngs};
 use crate::pipeline_worker::PipelineWorker;
+use crate::widgets::theme::get_theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -32,41 +34,32 @@ pub enum Focus {
     Overrides,
     Editor,
     Logs,
+    Settings,
     Mapping,
 }
 
 impl Focus {
-    fn next(&self, show_mapping: bool) -> Self {
+    fn next(&self) -> Self {
         match self {
             Focus::FileBrowser => Focus::Runner,
             Focus::Runner => Focus::Overrides,
             Focus::Overrides => Focus::Editor,
             Focus::Editor => Focus::Logs,
-            Focus::Logs => {
-                if show_mapping {
-                    Focus::Mapping
-                } else {
-                    Focus::FileBrowser
-                }
-            }
+            Focus::Logs => Focus::Settings,
+            Focus::Settings => Focus::Mapping,
             Focus::Mapping => Focus::FileBrowser,
         }
     }
 
-    fn prev(&self, show_mapping: bool) -> Self {
+    fn prev(&self) -> Self {
         match self {
-            Focus::FileBrowser => {
-                if show_mapping {
-                    Focus::Mapping
-                } else {
-                    Focus::Logs
-                }
-            }
+            Focus::FileBrowser => Focus::Mapping,
             Focus::Runner => Focus::FileBrowser,
             Focus::Overrides => Focus::Runner,
             Focus::Editor => Focus::Overrides,
             Focus::Logs => Focus::Editor,
-            Focus::Mapping => Focus::Logs,
+            Focus::Settings => Focus::Logs,
+            Focus::Mapping => Focus::Settings,
         }
     }
 
@@ -75,22 +68,18 @@ impl Focus {
             Focus::Editor => Some(Focus::FileBrowser),
             Focus::Logs => Some(Focus::Overrides),
             Focus::Mapping => Some(Focus::Editor),
+            Focus::Settings => Some(Focus::Logs),
             _ => None,
         }
     }
 
-    fn right(&self, show_mapping: bool) -> Option<Self> {
+    fn right(&self) -> Option<Self> {
         match self {
             Focus::FileBrowser => Some(Focus::Editor),
             Focus::Runner => Some(Focus::Editor),
             Focus::Overrides => Some(Focus::Logs),
-            Focus::Editor | Focus::Logs => {
-                if show_mapping {
-                    Some(Focus::Mapping)
-                } else {
-                    None
-                }
-            }
+            Focus::Editor => Some(Focus::Mapping),
+            Focus::Logs => Some(Focus::Settings),
             _ => None,
         }
     }
@@ -100,6 +89,7 @@ impl Focus {
             Focus::Runner => Some(Focus::FileBrowser),
             Focus::Overrides => Some(Focus::Runner),
             Focus::Logs => Some(Focus::Editor),
+            Focus::Settings => Some(Focus::Mapping),
             _ => None,
         }
     }
@@ -109,6 +99,7 @@ impl Focus {
             Focus::FileBrowser => Some(Focus::Runner),
             Focus::Runner => Some(Focus::Overrides),
             Focus::Editor => Some(Focus::Logs),
+            Focus::Mapping => Some(Focus::Settings),
             _ => None,
         }
     }
@@ -120,6 +111,7 @@ pub struct App {
     pub mapping_editor: MappingEditorState,
     pub runner: RunnerState,
     pub logs: LogsState,
+    pub settings: SettingsState,
     pub theme_overrides: ThemeOverridesState,
     pub pipeline_worker: PipelineWorker,
     pub tx: Sender<AppMsg>,
@@ -155,6 +147,7 @@ impl App {
             mapping_editor,
             runner,
             logs: LogsState::default(),
+            settings: SettingsState::default(),
             theme_overrides: ThemeOverridesState::default(),
             pipeline_worker,
             tx,
@@ -187,28 +180,18 @@ impl App {
                     .constraints([Constraint::Min(1), Constraint::Length(1)])
                     .split(area);
 
-                let show_mapping = self.runner.input_dir.is_some();
-
                 if self.cursor_editor.maximized {
                     self.cursor_editor
                         .render(main_chunks[0], f.buffer_mut(), true);
                 } else {
-                    let constraints = if show_mapping {
-                        vec![
-                            Constraint::Percentage(25), // Left: File Browser, Runner, Overrides
-                            Constraint::Percentage(50), // Middle: Cursor Editor, Logs
-                            Constraint::Percentage(25), // Right: Mapping Editor
-                        ]
-                    } else {
-                        vec![
-                            Constraint::Percentage(30), // Left
-                            Constraint::Percentage(70), // Middle
-                        ]
-                    };
-
+                    // Always show all three columns
                     let columns = Layout::default()
                         .direction(Direction::Horizontal)
-                        .constraints(constraints)
+                        .constraints([
+                            Constraint::Percentage(25), // Left: File Browser, Runner, Overrides
+                            Constraint::Percentage(50), // Middle: Cursor Editor, Logs
+                            Constraint::Percentage(25), // Right: Mapping Editor, Settings
+                        ])
                         .split(main_chunks[0]);
 
                     // Left Column
@@ -229,6 +212,15 @@ impl App {
                             Constraint::Percentage(30), // Logs
                         ])
                         .split(columns[1]);
+
+                    // Right Columnss
+                    let right_chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Percentage(60), // Mapping Editor
+                            Constraint::Percentage(40), // Settings
+                        ])
+                        .split(columns[2]);
 
                     // Render components
                     self.file_browser.render(
@@ -252,13 +244,16 @@ impl App {
                     self.logs
                         .render(middle_chunks[1], f.buffer_mut(), self.focus == Focus::Logs);
 
-                    if show_mapping {
-                        self.mapping_editor.render(
-                            columns[2],
-                            f.buffer_mut(),
-                            self.focus == Focus::Mapping,
-                        );
-                    }
+                    self.mapping_editor.render(
+                        right_chunks[0],
+                        f.buffer_mut(),
+                        self.focus == Focus::Mapping,
+                    );
+                    self.settings.render(
+                        right_chunks[1],
+                        f.buffer_mut(),
+                        self.focus == Focus::Settings,
+                    );
                 }
 
                 // Status bar
@@ -272,12 +267,14 @@ impl App {
                         Focus::Overrides => "Tab: Switch Field | Type to edit",
                         Focus::Editor => "Space: Play | ,/.: Frame | Arrows: Hotspot | S: Save",
                         Focus::Logs => "Logs View",
+                        Focus::Settings => "↑↓/jk: Select | Enter: Apply | ←→/hl: Quick Switch",
                         Focus::Mapping => "Enter: Edit | s: Save",
                     }
                 );
 
+                let theme = get_theme();
                 let status = Paragraph::new(status_text)
-                    .style(Style::default().fg(Color::Gray))
+                    .style(Style::default().fg(theme.text_secondary))
                     .alignment(Alignment::Center);
                 f.render_widget(status, main_chunks[1]);
             })?;
@@ -375,7 +372,7 @@ impl App {
                         }
                     }
                 }
-                self.mapping_editor.set_available_sources(sources);
+                self.mapping_editor.set_available_sources(sources, &self.tx);
             }
             AppMsg::OutputDirSelected(path) => {
                 self.runner.set_output_dir(path.clone());
@@ -391,11 +388,15 @@ impl App {
                     self.runner.input_dir.clone(),
                     self.runner.output_dir.clone(),
                 ) {
-                    let theme_name = input_dir
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("ConvertedCursors")
-                        .to_string();
+                    let theme_name = if !self.theme_overrides.output_name.trim().is_empty() {
+                        self.theme_overrides.output_name.trim().to_string()
+                    } else {
+                        input_dir
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("ConvertedCursors")
+                            .to_string()
+                    };
                     let mapping = self.mapping_editor.mapping.clone();
                     let selected_sizes: Vec<u32> = self
                         .theme_overrides
@@ -466,11 +467,15 @@ impl App {
                     self.runner.input_dir.clone(),
                     self.runner.output_dir.clone(),
                 ) {
-                    let theme_name = input_dir
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("ConvertedCursors")
-                        .to_string();
+                    let theme_name = if !self.theme_overrides.output_name.trim().is_empty() {
+                        self.theme_overrides.output_name.trim().to_string()
+                    } else {
+                        input_dir
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("ConvertedCursors")
+                            .to_string()
+                    };
                     let mapping = self.mapping_editor.mapping.clone();
 
                     if self.modified_cursors.is_empty() {
@@ -607,6 +612,7 @@ impl App {
                 self.cursor_editor.update(msg);
                 self.runner.update(msg);
                 self.logs.update(msg);
+                self.settings.update(msg);
                 self.theme_overrides.update(msg);
                 self.mapping_editor.update(msg);
             }
@@ -633,8 +639,7 @@ impl App {
             }
             (KeyCode::Right, KeyModifiers::CONTROL)
             | (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
-                let show_mapping = self.runner.input_dir.is_some();
-                if let Some(focus) = self.focus.right(show_mapping) {
+                if let Some(focus) = self.focus.right() {
                     self.focus = focus;
                 }
             }
@@ -650,12 +655,10 @@ impl App {
                 }
             }
             (KeyCode::Tab, _) => {
-                let show_mapping = self.runner.input_dir.is_some();
-                self.focus = self.focus.next(show_mapping);
+                self.focus = self.focus.next();
             }
             (KeyCode::BackTab, _) => {
-                let show_mapping = self.runner.input_dir.is_some();
-                self.focus = self.focus.prev(show_mapping);
+                self.focus = self.focus.prev();
             }
             _ => {
                 let msg = AppMsg::Key(key);
@@ -697,6 +700,9 @@ impl App {
                     }
                     Focus::Logs => {
                         self.logs.update(&msg);
+                    }
+                    Focus::Settings => {
+                        self.settings.update(&msg);
                     }
                     Focus::Mapping => {
                         if let Some(response) = self.mapping_editor.update(&msg) {

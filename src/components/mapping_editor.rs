@@ -2,17 +2,84 @@ use super::Component;
 use crate::event::AppMsg;
 use crate::model::mapping::CursorMapping;
 use crate::widgets::common::focused_block;
+use crate::widgets::theme::get_theme;
+use crossbeam_channel::Sender;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{
         Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
         ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget,
     },
 };
+
+// Scores how well a source name matches a target standard name.
+fn score_match(source: &str, target: &str) -> Option<usize> {
+    let source_lower = source.to_lowercase();
+    let target_lower = target.to_lowercase();
+
+    let source_words: Vec<&str> = source_lower
+        .split(|c: char| c.is_whitespace() || c == '-' || c == '_')
+        .filter(|w| w.len() >= 2)
+        .collect();
+
+    let target_words: Vec<&str> = target_lower
+        .split(|c: char| c.is_whitespace() || c == '-' || c == '_')
+        .filter(|w| w.len() >= 2)
+        .collect();
+
+    let mut total_score = 0usize;
+    let mut matched_any = false;
+
+    for target_word in &target_words {
+        let mut best_word_score = 0usize;
+
+        for source_word in &source_words {
+            let score = if source_word == target_word {
+                // Exact match, highest priority
+                target_word.len() * 10
+            } else if source_word.starts_with(target_word) || target_word.starts_with(source_word) {
+                // Prefix match, one starts with the other
+                // Score based on the length of the shorter (matched) portion
+                let common_len = source_word.len().min(target_word.len());
+                common_len * 5
+            } else if source_word.contains(target_word) || target_word.contains(source_word) {
+                // Substring match
+                let common_len = source_word.len().min(target_word.len());
+                common_len * 2
+            } else {
+                0
+            };
+
+            best_word_score = best_word_score.max(score);
+        }
+
+        if best_word_score > 0 {
+            matched_any = true;
+            total_score += best_word_score;
+        }
+    }
+
+    if matched_any { Some(total_score) } else { None }
+}
+
+// Finds the best matching source for a given target name.
+// Returns the source with the highest score, preferring shorter names on ties.
+fn find_best_match<'a>(sources: &'a [String], target: &str) -> Option<&'a String> {
+    sources
+        .iter()
+        .filter_map(|source| score_match(source, target).map(|score| (source, score)))
+        .max_by(|(src_a, score_a), (src_b, score_b)| {
+            // Compare by score, then prefer shorter source names
+            score_a
+                .cmp(score_b)
+                .then_with(|| src_b.len().cmp(&src_a.len()))
+        })
+        .map(|(source, _)| source)
+}
 
 #[derive(Default)]
 pub struct MappingEditorState {
@@ -50,26 +117,38 @@ impl MappingEditorState {
         }
     }
 
-    pub fn set_available_sources(&mut self, sources: Vec<String>) {
+    pub fn set_available_sources(&mut self, sources: Vec<String>, tx: &Sender<AppMsg>) {
         self.available_sources = sources;
         self.available_sources.sort();
-    }
 
-    #[allow(dead_code)]
-    pub fn load_mapping(&mut self, mapping: CursorMapping) {
-        self.mappings_list = mapping
-            .x11_to_win
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        self.mappings_list.sort_by(|a, b| a.0.cmp(&b.0));
-        self.mapping = mapping;
-        self.selected_index = 0;
-        self.list_state.select(Some(0));
-        self.scroll_state = self
-            .scroll_state
-            .content_length(self.mappings_list.len())
-            .position(0);
+        if !self.available_sources.is_empty() {
+            let default_mapping = CursorMapping::default();
+
+            for (x11_name, win_name) in &mut self.mappings_list {
+                let standard_win_name = default_mapping
+                    .x11_to_win
+                    .get(x11_name)
+                    .cloned()
+                    .unwrap_or_else(|| "Normal".to_string());
+
+                if let Some(matched_source) =
+                    find_best_match(&self.available_sources, &standard_win_name)
+                {
+                    tx.send(AppMsg::LogMessage(format!(
+                        "Matched {} (std: {}) -> {}",
+                        x11_name, standard_win_name, matched_source
+                    )))
+                    .ok();
+
+                    *win_name = matched_source.clone();
+                    self.mapping.set_mapping(x11_name.clone(), win_name.clone());
+                } else {
+                    // No match found, keep the standard name (will show as Missing)
+                    *win_name = standard_win_name;
+                    self.mapping.set_mapping(x11_name.clone(), win_name.clone());
+                }
+            }
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<AppMsg> {
@@ -179,9 +258,7 @@ impl Component for MappingEditorState {
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {
-        let chunks = Layout::default()
-            .constraints([Constraint::Min(0), Constraint::Length(3)])
-            .split(area);
+        let theme = get_theme();
 
         let title = if self.show_popup {
             "Mapping Editor (Selecting)"
@@ -191,11 +268,45 @@ impl Component for MappingEditorState {
 
         let mut block = focused_block(title, is_focused);
         if self.show_popup {
-            block = block.border_style(Style::default().fg(Color::Yellow));
+            block = block.border_style(Style::default().fg(theme.text_highlight));
         }
 
-        let inner_area = block.inner(chunks[0]);
-        block.render(chunks[0], buf);
+        let inner_area = block.inner(area);
+        block.render(area, buf);
+
+        if self.available_sources.is_empty() {
+            let placeholder_text = vec![
+                Line::from(Span::styled(
+                    "No input folder loaded",
+                    Style::default()
+                        .fg(theme.text_secondary)
+                        .add_modifier(Modifier::ITALIC),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Load an input folder to view cursor mappings",
+                    Style::default().fg(theme.text_secondary),
+                )),
+            ];
+
+            let placeholder = Paragraph::new(placeholder_text)
+                .alignment(ratatui::layout::Alignment::Center)
+                .block(Block::default());
+
+            let v_layout = Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([
+                    Constraint::Percentage(40),
+                    Constraint::Length(3),
+                    Constraint::Percentage(60),
+                ])
+                .split(inner_area);
+
+            placeholder.render(v_layout[1], buf);
+            return;
+        }
+
+        let default_mapping = CursorMapping::default();
 
         let items: Vec<ListItem> = self
             .mappings_list
@@ -204,29 +315,33 @@ impl Component for MappingEditorState {
             .map(|(i, (x11_name, win_name))| {
                 let style = if i == self.selected_index {
                     Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Yellow)
+                        .fg(theme.background)
+                        .bg(theme.text_highlight)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default()
+                    Style::default().fg(theme.text_primary)
                 };
 
                 let display_win = win_name;
 
+                let standard_mapping = default_mapping
+                    .x11_to_win
+                    .get(x11_name)
+                    .cloned()
+                    .unwrap_or_else(|| "Normal".to_string());
+
                 // Check if source exists in available_sources
-                // "Normal" is a special fallback case, usually valid if present
                 let exists = self.available_sources.contains(display_win);
                 let is_normal = display_win == "Normal";
 
-                // Visual indication logic:
-                // - Cyan: Exists in input folder
-                // - Red: Missing from input folder (will fallback to Normal if available)
-                // - Green: Valid fallback (Normal)
-
                 let source_color = if exists {
-                    if is_normal { Color::Green } else { Color::Cyan }
+                    if is_normal {
+                        theme.status_running
+                    } else {
+                        theme.status_completed
+                    }
                 } else {
-                    Color::Red
+                    theme.status_failed
                 };
 
                 let status_text = if !exists {
@@ -242,7 +357,12 @@ impl Component for MappingEditorState {
                 // Calculate available width for the source part
                 let available_width = (inner_area.width as usize).saturating_sub(27);
 
-                let full_source_text = format!("{}{}", display_win, status_text);
+                let full_source_text = if display_win != &standard_mapping {
+                    format!("{}{} (std: {})", display_win, status_text, standard_mapping)
+                } else {
+                    format!("{}{}", display_win, status_text)
+                };
+
                 let wrapped_source = textwrap::wrap(&full_source_text, available_width);
 
                 let mut lines = Vec::new();
@@ -259,7 +379,7 @@ impl Component for MappingEditorState {
                     Span::styled(
                         first_source_line,
                         style.fg(if i == self.selected_index && !self.show_popup {
-                            Color::Black
+                            theme.background
                         } else {
                             source_color
                         }),
@@ -273,7 +393,7 @@ impl Component for MappingEditorState {
                         Span::styled(
                             line.to_string(),
                             style.fg(if i == self.selected_index && !self.show_popup {
-                                Color::Black
+                                theme.background
                             } else {
                                 source_color
                             }),
@@ -287,8 +407,8 @@ impl Component for MappingEditorState {
 
         let list = List::new(items).highlight_style(
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
+                .fg(theme.background)
+                .bg(theme.text_highlight)
                 .add_modifier(Modifier::BOLD),
         );
 
@@ -306,29 +426,6 @@ impl Component for MappingEditorState {
 
         scrollbar.render(inner_area, buf, &mut self.scroll_state);
 
-        let help_text = if self.show_popup {
-            "Select source: j/k to move, Enter to confirm, Esc to cancel".to_string()
-        } else {
-            format!(
-                "{} mappings | {} available sources",
-                self.mappings_list.len(),
-                self.available_sources.len()
-            )
-        };
-
-        // Truncate help text if too long
-        let help_text = if help_text.len() > area.width as usize - 4 {
-            format!("{}...", &help_text[..area.width as usize - 7])
-        } else {
-            help_text
-        };
-
-        let help = Paragraph::new(help_text)
-            .block(Block::default().borders(Borders::ALL).title("Info"))
-            .style(Style::default().fg(Color::Gray))
-            .wrap(ratatui::widgets::Wrap { trim: true });
-        help.render(chunks[1], buf);
-
         if self.show_popup {
             let popup_area = centered_rect(60, 50, area);
             Clear.render(popup_area, buf);
@@ -336,7 +433,7 @@ impl Component for MappingEditorState {
             let block = Block::default()
                 .title("Select Source")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Blue));
+                .border_style(Style::default().fg(theme.border_focused));
 
             let inner_popup = block.inner(popup_area);
             block.render(popup_area, buf);
@@ -344,13 +441,13 @@ impl Component for MappingEditorState {
             let items: Vec<ListItem> = self
                 .available_sources
                 .iter()
-                .map(|s| ListItem::new(s.as_str()))
+                .map(|s| ListItem::new(s.as_str()).style(Style::default().fg(theme.text_primary)))
                 .collect();
 
             let list = List::new(items).highlight_style(
                 Style::default()
-                    .bg(Color::Blue)
-                    .fg(Color::White)
+                    .bg(theme.border_focused)
+                    .fg(theme.background)
                     .add_modifier(Modifier::BOLD),
             );
 

@@ -7,6 +7,7 @@ pub mod logs;
 pub mod mapping_editor;
 pub mod preview;
 pub mod runner;
+pub mod settings;
 pub mod theme_overrides;
 
 pub trait Component {
