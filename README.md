@@ -70,14 +70,37 @@ Download the `.rpm` file from the [Releases](https://github.com/Sevilze/ani2hypr
 sudo rpm -i ani2hypr-*.rpm
 ```
 
-### Nix Installation
+### Nix / NixOS
+
+**Run without installing:**
 
 ```bash
-nix run github:Sevilze/ani2hyprtui/latest
-nix profile install github:Sevilze/ani2hyprtui/latest
+nix run github:Sevilze/ani2hyprtui
 ```
 
-Or enter a development shell (uses main branch by default):
+**Install to user profile:**
+
+```bash
+nix profile install github:Sevilze/ani2hyprtui
+```
+
+**Add to your flake.nix:**
+
+```nix
+{
+  inputs = {
+    ani2hyprtui.url = "github:Sevilze/ani2hyprtui";
+  };
+}
+```
+
+Then add to your packages (NixOS or home-manager):
+
+```nix
+inputs.ani2hyprtui.packages.${pkgs.system}.default
+```
+
+**Development shell:**
 
 ```bash
 nix develop github:Sevilze/ani2hyprtui
