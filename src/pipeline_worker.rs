@@ -2,9 +2,12 @@
 
 use anyhow::Result;
 use crossbeam_channel::Sender;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use walkdir::WalkDir;
 
@@ -17,18 +20,26 @@ use crate::pipeline::xcursor_gen::XCursorThemeBuilder;
 
 pub struct PipelineWorker {
     tx: Sender<AppMsg>,
+    thread_count: usize,
 }
 
 impl PipelineWorker {
-    pub fn new(tx: Sender<AppMsg>) -> Self {
-        Self { tx }
+    pub fn new(tx: Sender<AppMsg>, thread_count: usize) -> Self {
+        Self { tx, thread_count }
+    }
+
+    pub fn set_thread_count(&mut self, count: usize) {
+        self.thread_count = count;
     }
 
     pub fn start_ani_to_png_conversion(&self, input_dir: PathBuf, output_dir: PathBuf) {
         let tx = self.tx.clone();
+        let thread_count = self.thread_count;
 
         thread::spawn(move || {
-            if let Err(e) = Self::run_ani_to_png_pipeline(&input_dir, &output_dir, &tx) {
+            if let Err(e) =
+                Self::run_ani_to_png_pipeline(&input_dir, &output_dir, &tx, thread_count)
+            {
                 let _ = tx.send(AppMsg::PipelineFailed(format!("{}", e)));
             }
         });
@@ -57,71 +68,108 @@ impl PipelineWorker {
         png_dir: Option<&Path>,
         target_sizes: Vec<u32>,
         tx: &Sender<AppMsg>,
+        thread_count: usize,
     ) -> Result<(usize, usize)> {
         // (processed, failed)
         let total_files = cursor_files.len();
         let conversion_options = ConversionOptions::new().with_target_sizes(target_sizes);
-        let mut processed = 0;
-        let mut failed = 0;
 
-        for (idx, cursor_file) in cursor_files.iter().enumerate() {
-            let file_name = cursor_file
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("cursor");
+        let processed = Arc::new(AtomicUsize::new(0));
+        let failed = Arc::new(AtomicUsize::new(0));
 
-            let _ = tx.send(AppMsg::LogMessage(format!(
-                "Processing {}/{}: {}",
-                idx + 1,
-                total_files,
-                file_name
-            )));
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(thread_count)
+            .build()?;
 
-            let xcur_output = xcur_dir.join(file_name);
-            match convert_windows_cursor(cursor_file, &xcur_output, &conversion_options, |msg| {
-                let _ = tx.send(AppMsg::LogMessage(msg));
-            }) {
-                Ok(_) => {
-                    if let Some(png_out) = png_dir {
-                        let png_output_dir = png_out.join(file_name);
-                        fs::create_dir_all(&png_output_dir)?;
+        pool.install(|| {
+            cursor_files
+                .par_iter()
+                .enumerate()
+                .for_each(|(idx, cursor_file)| {
+                    let file_name = cursor_file
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("cursor");
 
-                        let extract_options = ExtractOptions::new()
-                            .with_prefix(file_name)
-                            .with_config(true);
+                    let _ = tx.send(AppMsg::LogMessage(format!(
+                        "Processing {}/{}: {}",
+                        idx + 1,
+                        total_files,
+                        file_name
+                    )));
 
-                        match extract_to_pngs(&xcur_output, &png_output_dir, &extract_options) {
-                            Ok(_) => {
-                                processed += 1;
-                            }
-                            Err(e) => {
-                                let _ = tx.send(AppMsg::LogMessage(format!(
-                                    "Failed to extract PNGs: {}",
-                                    e
-                                )));
-                                failed += 1;
+                    let xcur_output = xcur_dir.join(file_name);
+                    match convert_windows_cursor(
+                        cursor_file,
+                        &xcur_output,
+                        &conversion_options,
+                        |msg| {
+                            let _ = tx.send(AppMsg::LogMessage(msg));
+                        },
+                    ) {
+                        Ok(_) => {
+                            if let Some(png_out) = png_dir {
+                                let png_output_dir = png_out.join(file_name);
+                                if let Err(e) = fs::create_dir_all(&png_output_dir) {
+                                    let _ = tx.send(AppMsg::LogMessage(format!(
+                                        "Failed to create dir: {}",
+                                        e
+                                    )));
+                                    failed.fetch_add(1, Ordering::Relaxed);
+                                    return;
+                                }
+
+                                let extract_options = ExtractOptions::new()
+                                    .with_prefix(file_name)
+                                    .with_config(true);
+
+                                match extract_to_pngs(
+                                    &xcur_output,
+                                    &png_output_dir,
+                                    &extract_options,
+                                ) {
+                                    Ok(_) => {
+                                        processed.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    Err(e) => {
+                                        let _ = tx.send(AppMsg::LogMessage(format!(
+                                            "Failed to extract PNGs: {}",
+                                            e
+                                        )));
+                                        failed.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                }
+                            } else {
+                                processed.fetch_add(1, Ordering::Relaxed);
                             }
                         }
-                    } else {
-                        processed += 1;
+                        Err(e) => {
+                            let _ =
+                                tx.send(AppMsg::LogMessage(format!("Failed to convert: {}", e)));
+                            failed.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
-                }
-                Err(e) => {
-                    let _ = tx.send(AppMsg::LogMessage(format!("  ✗ Failed to convert: {}", e)));
-                    failed += 1;
-                }
-            }
 
-            let _ = tx.send(AppMsg::PipelineProgress(processed + failed, total_files));
-        }
+                    let current_processed = processed.load(Ordering::Relaxed);
+                    let current_failed = failed.load(Ordering::Relaxed);
+                    let _ = tx.send(AppMsg::PipelineProgress(
+                        current_processed + current_failed,
+                        total_files,
+                    ));
+                });
+        });
 
-        Ok((processed, failed))
+        Ok((
+            processed.load(Ordering::Relaxed),
+            failed.load(Ordering::Relaxed),
+        ))
     }
 
     fn run_ani_to_png_pipeline(
         input_dir: &Path,
         output_dir: &Path,
         tx: &Sender<AppMsg>,
+        thread_count: usize,
     ) -> Result<()> {
         fs::create_dir_all(output_dir)?;
         let _ = tx.send(AppMsg::LogMessage(format!(
@@ -147,8 +195,14 @@ impl PipelineWorker {
         let xcur_dir = output_dir.join("_xcur_intermediate");
         fs::create_dir_all(&xcur_dir)?;
 
-        let (processed, failed) =
-            Self::convert_batch(&cursor_files, &xcur_dir, Some(output_dir), Vec::new(), tx)?;
+        let (processed, failed) = Self::convert_batch(
+            &cursor_files,
+            &xcur_dir,
+            Some(output_dir),
+            Vec::new(),
+            tx,
+            thread_count,
+        )?;
 
         let _ = fs::remove_dir_all(&xcur_dir);
 
@@ -165,9 +219,12 @@ impl PipelineWorker {
 
     pub fn start_ani_to_xcur_conversion(&self, input_dir: PathBuf, output_dir: PathBuf) {
         let tx = self.tx.clone();
+        let thread_count = self.thread_count;
 
         thread::spawn(move || {
-            if let Err(e) = Self::run_ani_to_xcur_pipeline(&input_dir, &output_dir, &tx) {
+            if let Err(e) =
+                Self::run_ani_to_xcur_pipeline(&input_dir, &output_dir, &tx, thread_count)
+            {
                 let _ = tx.send(AppMsg::PipelineFailed(format!("{}", e)));
             }
         });
@@ -177,6 +234,7 @@ impl PipelineWorker {
         input_dir: &Path,
         output_dir: &Path,
         tx: &Sender<AppMsg>,
+        thread_count: usize,
     ) -> Result<()> {
         fs::create_dir_all(output_dir)?;
 
@@ -195,7 +253,14 @@ impl PipelineWorker {
             total_files
         )));
 
-        let (processed, _) = Self::convert_batch(&cursor_files, output_dir, None, Vec::new(), tx)?;
+        let (processed, _) = Self::convert_batch(
+            &cursor_files,
+            output_dir,
+            None,
+            Vec::new(),
+            tx,
+            thread_count,
+        )?;
 
         let _ = tx.send(AppMsg::PipelineCompleted(processed));
         Ok(())
@@ -210,6 +275,7 @@ impl PipelineWorker {
         target_sizes: Vec<u32>,
     ) {
         let tx = self.tx.clone();
+        let thread_count = self.thread_count;
 
         thread::spawn(move || {
             if let Err(e) = Self::run_full_theme_pipeline(
@@ -219,6 +285,7 @@ impl PipelineWorker {
                 mapping,
                 target_sizes,
                 &tx,
+                thread_count,
             ) {
                 let _ = tx.send(AppMsg::PipelineFailed(format!("{}", e)));
             }
@@ -235,6 +302,7 @@ impl PipelineWorker {
         hotspot_overrides: HashMap<String, HashMap<u32, (u32, u32)>>,
     ) {
         let tx = self.tx.clone();
+        let thread_count = self.thread_count;
 
         thread::spawn(move || {
             if let Err(e) = Self::run_incremental_theme_update(
@@ -245,12 +313,14 @@ impl PipelineWorker {
                 modified_cursors,
                 hotspot_overrides,
                 &tx,
+                thread_count,
             ) {
                 let _ = tx.send(AppMsg::PipelineFailed(format!("{}", e)));
             }
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_incremental_theme_update(
         input_dir: &Path,
         output_dir: &Path,
@@ -259,6 +329,7 @@ impl PipelineWorker {
         modified_cursors: Vec<String>,
         hotspot_overrides: HashMap<String, HashMap<u32, (u32, u32)>>,
         tx: &Sender<AppMsg>,
+        thread_count: usize,
     ) -> Result<()> {
         let count = modified_cursors.len();
         let _ = tx.send(AppMsg::LogMessage(format!(
@@ -277,112 +348,130 @@ impl PipelineWorker {
 
         let default_options = ConversionOptions::new();
 
-        for x11_name in modified_cursors {
-            if let Some(win_name) = mapping.get_win_name(&x11_name) {
-                let _ = tx.send(AppMsg::LogMessage(format!(
-                    "Updating {} -> {}",
-                    x11_name, win_name
-                )));
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(thread_count)
+            .build()?;
 
-                // Find source file
-                let mut source_file = None;
-                // Try .ani then .cur
-                let ani_path = input_dir.join(format!("{}.ani", win_name));
-                let cur_path = input_dir.join(format!("{}.cur", win_name));
+        pool.install(|| {
+            modified_cursors.par_iter().for_each(|x11_name| {
+                if let Some(win_name) = mapping.get_win_name(x11_name) {
+                    let _ = tx.send(AppMsg::LogMessage(format!(
+                        "Updating {} -> {}",
+                        x11_name, win_name
+                    )));
 
-                if ani_path.exists() {
-                    source_file = Some(ani_path);
-                } else if cur_path.exists() {
-                    source_file = Some(cur_path);
-                } else if win_name == "Normal" {
-                    // Fallback logic if needed, but usually Normal should exist
-                }
+                    // Find source file
+                    let mut source_file = None;
+                    // Try .ani then .cur
+                    let ani_path = input_dir.join(format!("{}.ani", win_name));
+                    let cur_path = input_dir.join(format!("{}.cur", win_name));
 
-                if let Some(source_path) = source_file {
-                    // Convert to XCursor
-                    let xcur_output = cursors_dir.join(&x11_name);
-
-                    let mut options = default_options.clone();
-                    if let Some(overrides) = hotspot_overrides.get(&x11_name) {
-                        for (size, (x, y)) in overrides {
-                            options = options.with_hotspot_override(*size, *x, *y);
-                        }
+                    if ani_path.exists() {
+                        source_file = Some(ani_path);
+                    } else if cur_path.exists() {
+                        source_file = Some(cur_path);
+                    } else if win_name == "Normal" {
+                        // Fallback logic if needed, but usually Normal should exist
                     }
 
-                    if let Err(e) =
-                        convert_windows_cursor(&source_path, &xcur_output, &options, |msg| {
-                            let _ = tx.send(AppMsg::LogMessage(msg));
-                        })
-                    {
-                        let _ = tx.send(AppMsg::LogMessage(format!(
-                            "Failed to convert XCursor: {}",
-                            e
-                        )));
-                        continue;
-                    }
+                    if let Some(source_path) = source_file {
+                        // Convert to XCursor
+                        let xcur_output = cursors_dir.join(x11_name);
 
-                    // Update symlinks for this cursor
-                    let symlinks = mapping.get_symlinks(&x11_name);
-                    for link in &symlinks {
-                        let link_path = cursors_dir.join(link);
-                        if link_path.exists() {
-                            let _ = fs::remove_file(&link_path);
-                        }
-                        // Create relative symlink
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::fs::symlink;
-                            if let Err(e) = symlink(&x11_name, &link_path) {
-                                let _ = tx.send(AppMsg::LogMessage(format!(
-                                    "Failed to symlink {}: {}",
-                                    link, e
-                                )));
+                        let mut options = default_options.clone();
+                        if let Some(overrides) = hotspot_overrides.get(x11_name) {
+                            for (size, (x, y)) in overrides {
+                                options = options.with_hotspot_override(*size, *x, *y);
                             }
                         }
-                    }
 
-                    // Update Hyprcursor
-                    // Extract XCursor to temp dir
-                    let temp_dir = tempfile::tempdir()?;
-                    let working_state_dir = temp_dir.path();
+                        if let Err(e) =
+                            convert_windows_cursor(&source_path, &xcur_output, &options, |msg| {
+                                let _ = tx.send(AppMsg::LogMessage(msg));
+                            })
+                        {
+                            let _ = tx.send(AppMsg::LogMessage(format!(
+                                "Failed to convert XCursor: {}",
+                                e
+                            )));
+                            return;
+                        }
 
-                    // Pass overrides (symlinks) to the extractor
-                    if let Err(e) = hyprcursor::extract_xcursor_to_hypr_source(
-                        &xcur_output,
-                        working_state_dir,
-                        None,
-                        symlinks.clone(),
-                    ) {
-                        let _ = tx.send(AppMsg::LogMessage(format!(
-                            "Failed to extract for Hyprcursor: {}",
-                            e
-                        )));
-                        continue;
-                    }
+                        // Update symlinks for this cursor
+                        let symlinks = mapping.get_symlinks(x11_name);
+                        for link in &symlinks {
+                            let link_path = cursors_dir.join(link);
+                            if link_path.exists() {
+                                let _ = fs::remove_file(&link_path);
+                            }
+                            // Create relative symlink
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::symlink;
+                                if let Err(e) = symlink(x11_name, &link_path) {
+                                    let _ = tx.send(AppMsg::LogMessage(format!(
+                                        "Failed to symlink {}: {}",
+                                        link, e
+                                    )));
+                                }
+                            }
+                        }
 
-                    // Compile to .hlc
-                    let shape_dir = working_state_dir.join(&x11_name);
+                        // Update Hyprcursor
+                        // Extract XCursor to temp dir
+                        let temp_dir = match tempfile::tempdir() {
+                            Ok(d) => d,
+                            Err(e) => {
+                                let _ = tx.send(AppMsg::LogMessage(format!(
+                                    "Failed to create temp dir: {}",
+                                    e
+                                )));
+                                return;
+                            }
+                        };
+                        let working_state_dir = temp_dir.path();
 
-                    if let Err(e) =
-                        hyprcursor::process_shape(&shape_dir, &hyprcursors_dir, &x11_name, |msg| {
-                            let _ = tx.send(AppMsg::LogMessage(msg));
-                        })
-                    {
-                        let _ = tx.send(AppMsg::LogMessage(format!(
-                            "Failed to compile Hyprcursor: {}",
-                            e
-                        )));
+                        // Pass overrides (symlinks) to the extractor
+                        if let Err(e) = hyprcursor::extract_xcursor_to_hypr_source(
+                            &xcur_output,
+                            working_state_dir,
+                            None,
+                            symlinks.clone(),
+                        ) {
+                            let _ = tx.send(AppMsg::LogMessage(format!(
+                                "Failed to extract for Hyprcursor: {}",
+                                e
+                            )));
+                            return;
+                        }
+
+                        // Compile to .hlc
+                        let shape_dir = working_state_dir.join(x11_name);
+
+                        if let Err(e) = hyprcursor::process_shape(
+                            &shape_dir,
+                            &hyprcursors_dir,
+                            x11_name,
+                            |msg| {
+                                let _ = tx.send(AppMsg::LogMessage(msg));
+                            },
+                        ) {
+                            let _ = tx.send(AppMsg::LogMessage(format!(
+                                "Failed to compile Hyprcursor: {}",
+                                e
+                            )));
+                        } else {
+                            let _ = tx.send(AppMsg::LogMessage(format!("Updated {}", x11_name)));
+                        }
                     } else {
-                        let _ = tx.send(AppMsg::LogMessage(format!("Updated {}", x11_name)));
+                        let _ = tx.send(AppMsg::LogMessage(format!(
+                            "Source file not found for {}",
+                            win_name
+                        )));
                     }
-                } else {
-                    let _ = tx.send(AppMsg::LogMessage(format!(
-                        "Source file not found for {}",
-                        win_name
-                    )));
                 }
-            }
-        }
+            });
+        });
 
         let _ = tx.send(AppMsg::LogMessage(
             "Incremental update completed.".to_string(),
@@ -397,6 +486,7 @@ impl PipelineWorker {
         mapping: CursorMapping,
         target_sizes: Vec<u32>,
         tx: &Sender<AppMsg>,
+        thread_count: usize,
     ) -> Result<()> {
         // ANI to XCursor binaries
         let _ = tx.send(AppMsg::LogMessage(
@@ -419,8 +509,14 @@ impl PipelineWorker {
             return Ok(());
         }
 
-        let (processed, _) =
-            Self::convert_batch(&cursor_files, &xcur_dir, Some(&png_dir), target_sizes, tx)?;
+        let (processed, _) = Self::convert_batch(
+            &cursor_files,
+            &xcur_dir,
+            Some(&png_dir),
+            target_sizes,
+            tx,
+            thread_count,
+        )?;
 
         if processed == 0 {
             let _ = tx.send(AppMsg::PipelineFailed(
@@ -492,5 +588,46 @@ impl PipelineWorker {
         let _ = tx.send(AppMsg::XCursorGenerated(theme_output.display().to_string()));
         let _ = tx.send(AppMsg::PipelineCompleted(processed));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossbeam_channel::unbounded;
+    use std::fs::File;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_convert_batch_threading() {
+        let (tx, rx) = unbounded();
+        let temp_dir = tempdir().unwrap();
+        let input_dir = temp_dir.path().join("input");
+        let xcur_dir = temp_dir.path().join("xcur");
+        let png_dir = temp_dir.path().join("png");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::create_dir_all(&xcur_dir).unwrap();
+        fs::create_dir_all(&png_dir).unwrap();
+
+        let mut files = Vec::new();
+        for i in 0..10 {
+            let path = input_dir.join(format!("cursor_{}.cur", i));
+            File::create(&path).unwrap();
+            files.push(path);
+        }
+
+        let result =
+            PipelineWorker::convert_batch(&files, &xcur_dir, Some(&png_dir), Vec::new(), &tx, 4);
+
+        assert!(result.is_ok());
+        let (processed, failed) = result.unwrap();
+        assert_eq!(processed + failed, 10);
+
+        let mut msg_count = 0;
+        while let Ok(_) = rx.try_recv() {
+            msg_count += 1;
+        }
+        assert!(msg_count > 0);
     }
 }

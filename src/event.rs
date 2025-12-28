@@ -33,4 +33,5 @@ pub enum AppMsg {
     // General
     ErrorOccurred(String),
     LogMessage(String),
+    ThreadCountChanged(usize),
 }

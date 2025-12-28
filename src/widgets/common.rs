@@ -1,8 +1,8 @@
+use super::theme::get_theme;
 use ratatui::{
-    style::{Style, Modifier},
+    style::{Modifier, Style},
     widgets::{Block, BorderType, Borders},
 };
-use super::theme::get_theme;
 
 pub fn focused_block<'a>(title: &'a str, is_focused: bool) -> Block<'a> {
     let theme = get_theme();
@@ -19,7 +19,9 @@ pub fn focused_block<'a>(title: &'a str, is_focused: bool) -> Block<'a> {
     };
 
     let title_style = if is_focused {
-        Style::default().fg(theme.text_highlight).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.text_highlight)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };

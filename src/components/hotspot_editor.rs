@@ -41,7 +41,7 @@ pub struct HotspotEditorState {
 
 impl Default for HotspotEditorState {
     fn default() -> Self {
-        Self::new_with_picker(Picker::from_fontsize((8, 16)))
+        Self::new_with_picker(Picker::halfblocks())
     }
 }
 

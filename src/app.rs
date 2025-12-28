@@ -133,14 +133,17 @@ impl App {
         runner.set_sender(tx.clone());
 
         // Only set input dir if it's not the default ".", so mapping editor starts hidden
-        if config.input_dir != std::path::PathBuf::from(".") {
+        if config.input_dir.as_path() != Path::new(".") {
             runner.set_input_dir(config.input_dir.clone());
         }
         runner.set_output_dir(config.output_dir.clone());
 
         let mapping_editor = MappingEditorState::new(config.mapping.clone());
 
-        let pipeline_worker = PipelineWorker::new(tx.clone());
+        let pipeline_worker = PipelineWorker::new(tx.clone(), config.thread_count);
+
+        let mut settings = SettingsState::default();
+        settings.set_thread_count(config.thread_count);
 
         Self {
             file_browser,
@@ -148,7 +151,7 @@ impl App {
             mapping_editor,
             runner,
             logs: LogsState::default(),
-            settings: SettingsState::default(),
+            settings,
             theme_overrides: ThemeOverridesState::default(),
             pipeline_worker,
             tx,
@@ -174,6 +177,9 @@ impl App {
         'outer: loop {
             terminal.draw(|f| {
                 let area = f.area();
+                let theme = get_theme();
+
+                f.buffer_mut().set_style(area, Style::default().bg(theme.surface));
 
                 // Main layout: vertical split into content and status bar
                 let main_chunks = Layout::default()
@@ -273,7 +279,7 @@ impl App {
                     }
                 );
 
-                let theme = get_theme();
+
                 let status = Paragraph::new(status_text)
                     .style(Style::default().fg(theme.text_secondary))
                     .alignment(Alignment::Center);
@@ -343,6 +349,17 @@ impl App {
             }
             AppMsg::CursorSelected(_) | AppMsg::CursorLoaded(_) => {
                 self.handle_cursor_msg(&msg);
+            }
+            AppMsg::ThreadCountChanged(count) => {
+                self.pipeline_worker.set_thread_count(*count);
+                let _ = self.tx.send(AppMsg::LogMessage(format!(
+                    "Thread count set to {}",
+                    if *count == 0 {
+                        "Auto".to_string()
+                    } else {
+                        count.to_string()
+                    }
+                )));
             }
             AppMsg::ErrorOccurred(err) => {
                 eprintln!("Error: {}", err);
@@ -699,7 +716,9 @@ impl App {
                         self.logs.update(&msg);
                     }
                     Focus::Settings => {
-                        self.settings.update(&msg);
+                        if let Some(response) = self.settings.update(&msg) {
+                            let _ = self.tx.send(response);
+                        }
                     }
                     Focus::Mapping => {
                         if let Some(response) = self.mapping_editor.update(&msg) {

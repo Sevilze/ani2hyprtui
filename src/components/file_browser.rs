@@ -8,7 +8,10 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Modifier, Style},
-    widgets::{List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
+    widgets::{
+        List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
+        Widget,
+    },
 };
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -115,7 +118,7 @@ impl Component for FileBrowserState {
                 if self.last_refresh.elapsed() >= Duration::from_secs(1) {
                     self.refresh_entries();
                     self.last_refresh = Instant::now();
-                    
+
                     // Ensure selection is valid
                     if let Some(selected) = self.list_state.selected()
                         && selected >= self.entries.len()
@@ -125,8 +128,7 @@ impl Component for FileBrowserState {
                     }
                 }
             }
-            AppMsg::Key(key) => {
-                match key.code {
+            AppMsg::Key(key) => match key.code {
                 KeyCode::Down | KeyCode::Char('j') => {
                     if self.entries.is_empty() {
                         return None;
@@ -174,8 +176,7 @@ impl Component for FileBrowserState {
                     }
                 }
                 _ => {}
-            }
-        }
+            },
             _ => {}
         }
         None
@@ -190,7 +191,8 @@ impl Component for FileBrowserState {
             .map(|entry| {
                 let icon = if entry.is_dir() { "📁" } else { "📄" };
                 let name = entry.file_name().unwrap_or_default().to_string_lossy();
-                ListItem::new(format!("{} {}", icon, name)).style(Style::default().fg(theme.text_primary))
+                ListItem::new(format!("{} {}", icon, name))
+                    .style(Style::default().fg(theme.text_primary))
             })
             .collect();
 
