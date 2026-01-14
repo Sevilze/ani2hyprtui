@@ -2,11 +2,10 @@
 name = "ani2hyprtui"
 version = "0.2.2"
 edition = "2024"
-
 description = "A TUI tool to convert animated cursors to Hyprcursor format"
 repository = "https://github.com/Sevilze/ani2hyprtui"
 license = "GPL-3.0"
-keywords = ["cursor", "hyprland", "tui", "converter"]
+keywords = ["converter", "cursor", "hyprland", "tui"]
 categories = ["command-line-utilities"]
 
 [package.metadata.deb]
@@ -17,37 +16,40 @@ depends = "$auto"
 section = "utils"
 priority = "optional"
 assets = [
-    ["target/release/ani2hyprtui", "usr/bin/ani2hypr", "755"],
-    ["README.md", "usr/share/doc/ani2hypr/README.md", "644"],
-    ["LICENSE", "usr/share/doc/ani2hypr/LICENSE", "644"],
+  ["target/release/ani2hyprtui", "usr/bin/ani2hypr", "755"],
+  ["README.md", "usr/share/doc/ani2hypr/README.md", "644"],
+  ["LICENSE", "usr/share/doc/ani2hypr/LICENSE", "644"],
 ]
 
 [package.metadata.generate-rpm]
 name = "ani2hypr"
 assets = [
-    { source = "target/release/ani2hyprtui", dest = "/usr/bin/ani2hypr", mode = "755" },
-    { source = "README.md", dest = "/usr/share/doc/ani2hypr/README.md", mode = "644" },
-    { source = "LICENSE", dest = "/usr/share/licenses/ani2hypr/LICENSE", mode = "644" },
+  { source = "target/release/ani2hyprtui", dest = "/usr/bin/ani2hypr", mode = "755" },
+  { source = "README.md", dest = "/usr/share/doc/ani2hypr/README.md", mode = "644" },
+  { source = "LICENSE", dest = "/usr/share/licenses/ani2hypr/LICENSE", mode = "644" },
 ]
 
 [dependencies]
 anyhow = "1"
+byteorder = "1"
 crossbeam-channel = "0.5"
 crossterm = "0.29"
 dirs = "6"
 image = "0.25"
 imageproc = "0.25"
-ratatui = { version= "0.30", features = ["all-widgets"] }
-ratatui-image = "10.0"
+ratatui = { version = "0.30", features = ["all-widgets"] }
+ratatui-image = { version = "10.0", default-features = false, features = [
+  "image-defaults",
+  "crossterm"
+] }
+rayon = "1.11.0"
+resvg = "0.45.1"
 serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+textwrap = "0.16.2"
+tiny-skia = "0.11.0"
 toml = "0.9"
+usvg = "0.45.1"
 walkdir = "2"
 xcursor = "0.3"
-byteorder = "1"
-tempfile = "3"
 zip = "7.0"
-resvg = "0.45.1"
-usvg = "0.45.1"
-tiny-skia = "0.11.0"
-textwrap = "0.16.2"
-rayon = "1.11.0"
