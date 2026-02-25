@@ -1,0 +1,18 @@
+name: Coverage
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-tarpaulin
+      - run: RUST_TEST_THREADS=1 cargo tarpaulin --workspace --skip-clean --timeout 600 --coveralls ${{ secrets.COVERALLS_REPO_TOKEN }}
