@@ -1,5 +1,6 @@
 use anyhow::Result;
 use byteorder::{LittleEndian, WriteBytesExt};
+use image::imageops::FilterType;
 use std::io::Write;
 
 use super::cur::CursorFrame;
@@ -14,13 +15,24 @@ pub fn to_x11(frames: &[CursorFrame]) -> Result<Vec<u8>> {
 
     for frame in frames {
         for cursor in &frame.images {
-            let width = cursor.image.width();
-            let height = cursor.image.height();
-            let (hotspot_x, hotspot_y) = cursor.hotspot;
             let nominal = cursor.nominal_size;
+            let actual_w = cursor.image.width();
+            let actual_h = cursor.image.height();
+
+            // Resize image to match its nominal size if they differ
+            // This ensures consistent sizing between xcursor and hyprcursor outputs
+            let image = if actual_w != nominal || actual_h != nominal {
+                image::imageops::resize(&cursor.image, nominal, nominal, FilterType::Lanczos3)
+            } else {
+                cursor.image.clone()
+            };
+
+            let width = image.width();
+            let height = image.height();
+            let (hotspot_x, hotspot_y) = cursor.hotspot;
             let delay = frame.delay;
 
-            let pixels = premultiply_alpha(&cursor.image);
+            let pixels = premultiply_alpha(&image);
 
             chunks.push(ChunkData {
                 chunk_type: CHUNK_IMAGE,
