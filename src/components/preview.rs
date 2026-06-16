@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::{StatefulImage, picker::Picker, protocol::StatefulProtocol};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::model::cursor::{CursorMeta, Frame, SizeVariant};
@@ -35,8 +35,6 @@ struct BaseImageData {
 pub struct PreviewState {
     pub picker: Arc<Mutex<Picker>>,
     base_cache: HashMap<String, BaseImageData>,
-    // Cache for final encoded protocols: "path|WxH|hx,hy" -> ready to render
-    protocol_cache: HashMap<String, StatefulProtocol>,
 }
 
 impl PreviewState {
@@ -44,19 +42,11 @@ impl PreviewState {
         Self {
             picker,
             base_cache: HashMap::new(),
-            protocol_cache: HashMap::new(),
         }
     }
 
     fn base_key(path: &str, target_size: (u32, u32)) -> String {
         format!("{}|{}x{}", path, target_size.0, target_size.1)
-    }
-
-    fn proto_key(path: &str, target_size: (u32, u32), hotspot: (u32, u32)) -> String {
-        format!(
-            "{}|{}x{}|{},{}",
-            path, target_size.0, target_size.1, hotspot.0, hotspot.1
-        )
     }
 
     fn process_base_image(path: &str, target_size: (u32, u32)) -> Option<BaseImageData> {
@@ -151,60 +141,56 @@ impl PreviewState {
         draw_line_segment_mut(canvas, (hx + box_w, hy), (hx + box_w, hy + box_h), color);
     }
 
-    fn ensure_cached(&mut self, path: &str, hotspot: (u32, u32), target_size: (u32, u32)) {
-        let proto_key = Self::proto_key(path, target_size, hotspot);
-
-        if self.protocol_cache.contains_key(&proto_key) {
-            return;
-        }
-
+    fn ensure_base_cached(&mut self, path: &str, target_size: (u32, u32)) {
         let base_key = Self::base_key(path, target_size);
 
         if !self.base_cache.contains_key(&base_key) {
             if let Some(base_data) = Self::process_base_image(path, target_size) {
                 self.base_cache.insert(base_key.clone(), base_data);
-            } else {
-                return;
-            }
-        }
-
-        if let Some(base_data) = self.base_cache.get(&base_key) {
-            let mut final_canvas = base_data.canvas.clone();
-
-            Self::draw_hotspot(
-                &mut final_canvas,
-                hotspot,
-                base_data.scale,
-                base_data.offset_x,
-                base_data.offset_y,
-            );
-
-            // Encode to protocol
-            if let Ok(picker) = self.picker.lock() {
-                let proto = picker.new_resize_protocol(DynamicImage::ImageRgba8(final_canvas));
-                self.protocol_cache.insert(proto_key, proto);
             }
         }
     }
 
-    // Invalidate protocol cache only for a variant
-    pub fn invalidate_protocol_for_variant(&mut self, variant: &SizeVariant) {
-        let paths_to_remove: HashSet<String> = variant
-            .frames
-            .iter()
-            .map(|f| f.png_path.to_string_lossy().to_string())
-            .collect();
+    /// Preload all base images for a variant so animation plays without flicker
+    pub fn preload_variant(
+        &mut self,
+        variant: &SizeVariant,
+        _hotspot: (u32, u32),
+        target_size: (u32, u32),
+    ) {
+        for frame in &variant.frames {
+            let path = frame.png_path.to_string_lossy();
+            if !path.is_empty() {
+                self.ensure_base_cached(&path, target_size);
+            }
+        }
+    }
 
-        // Only remove from protocol cache, keep base images
-        self.protocol_cache.retain(|k, _| {
-            let path = k.split('|').next().unwrap_or("");
-            !paths_to_remove.contains(path)
-        });
+    /// Create a fresh protocol for the current frame
+    fn create_protocol(
+        &mut self,
+        path: &str,
+        hotspot: (u32, u32),
+        target_size: (u32, u32),
+    ) -> Option<StatefulProtocol> {
+        let base_key = Self::base_key(path, target_size);
+        let base_data = self.base_cache.get(&base_key)?;
+
+        let mut final_canvas = base_data.canvas.clone();
+        Self::draw_hotspot(
+            &mut final_canvas,
+            hotspot,
+            base_data.scale,
+            base_data.offset_x,
+            base_data.offset_y,
+        );
+
+        let picker = self.picker.lock().ok()?;
+        Some(picker.new_resize_protocol(DynamicImage::ImageRgba8(final_canvas)))
     }
 
     pub fn clear_cache(&mut self) {
         self.base_cache.clear();
-        self.protocol_cache.clear();
     }
 
     fn center_image_rect(area: Rect) -> Rect {
@@ -269,15 +255,13 @@ impl PreviewState {
         let target_w = (image_area.width as u32 * font_w as u32).max(1);
         let target_h = (image_area.height as u32 * font_h as u32).max(1);
 
-        if let Some((path, hotspot, _, _, _, _, _)) = &data {
-            self.ensure_cached(path, *hotspot, (target_w, target_h));
+        if let Some((_, hotspot, _, _, variant, _, _)) = &data {
+            self.preload_variant(variant, *hotspot, (target_w, target_h));
         }
 
         if let Some((path, hotspot, size, _, variant, frame, frame_ix)) = data {
-            let key = Self::proto_key(path, (target_w, target_h), hotspot);
-
-            if let Some(proto) = self.protocol_cache.get_mut(&key) {
-                StatefulImage::default().render(image_area, buf, proto);
+            if let Some(mut proto) = self.create_protocol(path, hotspot, (target_w, target_h)) {
+                StatefulImage::default().render(image_area, buf, &mut proto);
 
                 let (text_content, text_area) = if maximized {
                     let lines = vec![
