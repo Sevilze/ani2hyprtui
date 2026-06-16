@@ -276,6 +276,7 @@ pub fn extract_xcursor_to_hypr_source(
 
     let algo = resize_algo.unwrap_or("none");
     writeln!(meta_file, "resize_algorithm = {}", algo)?;
+    writeln!(meta_file, "nominal_size = 1.0")?;
 
     let first = &entries[0];
     if first.size > 0 {
@@ -423,6 +424,7 @@ where
 
         let algo = resize_algo.unwrap_or("none");
         writeln!(meta_file, "resize_algorithm = {}", algo)?;
+        writeln!(meta_file, "nominal_size = 1.0")?;
 
         // Calculate relative hotspot from the first entry
         let first = &entries[0];

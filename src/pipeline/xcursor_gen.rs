@@ -31,29 +31,53 @@ impl XCursorThemeBuilder {
         let cursors_dir = self.output_dir.join("cursors");
         fs::create_dir_all(&cursors_dir)?;
 
+        // Collect available files for prefix matching
+        let available_files: Vec<PathBuf> = fs::read_dir(xcur_source_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .map(|e| e.path())
+            .collect();
+
         let mut count = 0;
 
         // Copy and rename cursor files according to mapping
         for (x11_name, win_name) in &self.mapping.x11_to_win {
-            let source_file = xcur_source_dir.join(win_name);
+            // Try exact match first
+            let mut source_file = xcur_source_dir.join(win_name);
             if !source_file.exists() {
+                // Try prefix match: look for files starting with win_name + "_"
+                let prefix = format!("{}_", win_name);
+                source_file = available_files
+                    .iter()
+                    .find(|f| {
+                        f.file_name()
+                            .map(|n| n.to_string_lossy().starts_with(&prefix))
+                            .unwrap_or(false)
+                    })
+                    .cloned()
+                    .unwrap_or_default();
+            }
+            if !source_file.exists() {
+                // Fallback: try to use the left_ptr / Normal cursor
                 if let Some(normal_win_name) = self.mapping.x11_to_win.get("left_ptr") {
-                    let normal_source = xcur_source_dir.join(normal_win_name);
+                    let mut normal_source = xcur_source_dir.join(normal_win_name);
+                    if !normal_source.exists() {
+                        let prefix = format!("{}_", normal_win_name);
+                        normal_source = available_files
+                            .iter()
+                            .find(|f| {
+                                f.file_name()
+                                    .map(|n| n.to_string_lossy().starts_with(&prefix))
+                                    .unwrap_or(false)
+                            })
+                            .cloned()
+                            .unwrap_or_default();
+                    }
                     if normal_source.exists() {
                         let dest_file = cursors_dir.join(x11_name);
                         if !dest_file.exists() {
                             fs::copy(&normal_source, &dest_file)?;
                             count += 1;
-                        }
-                    } else {
-                        // Hard fallback to "Normal" string if left_ptr mapping isn't pointing to valid file
-                        let hard_normal = xcur_source_dir.join("Normal");
-                        if hard_normal.exists() {
-                            let dest_file = cursors_dir.join(x11_name);
-                            if !dest_file.exists() {
-                                fs::copy(&hard_normal, &dest_file)?;
-                                count += 1;
-                            }
                         }
                     }
                 }
