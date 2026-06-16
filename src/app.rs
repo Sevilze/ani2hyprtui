@@ -422,6 +422,10 @@ impl App {
                         mapping,
                         selected_sizes,
                     );
+                } else {
+                    let _ = self.tx.send(AppMsg::ErrorOccurred(
+                        "Cannot start pipeline: input or output directory not set".to_string(),
+                    ));
                 }
             }
             AppMsg::ConvertXCursorOnly => {
@@ -431,6 +435,10 @@ impl App {
                 ) {
                     self.pipeline_worker
                         .start_ani_to_xcur_conversion(input_dir, output_dir);
+                } else {
+                    let _ = self.tx.send(AppMsg::ErrorOccurred(
+                        "Cannot start pipeline: input or output directory not set".to_string(),
+                    ));
                 }
             }
             AppMsg::ConvertPNGOnly => {
@@ -440,6 +448,10 @@ impl App {
                 ) {
                     self.pipeline_worker
                         .start_ani_to_png_conversion(input_dir, output_dir);
+                } else {
+                    let _ = self.tx.send(AppMsg::ErrorOccurred(
+                        "Cannot start pipeline: input or output directory not set".to_string(),
+                    ));
                 }
             }
             AppMsg::PipelineCompleted(_count) => {
@@ -534,11 +546,36 @@ impl App {
                     path.display()
                 )));
 
-                let cursors = load_cursor_folder_from_pngs(path).or_else(|e| {
+                // Auto-sync runner dirs so pipeline can start without manual 'i'/'o'
+                self.runner.set_input_dir(path.clone());
+                if self.runner.output_dir.is_none() {
+                    let default_out = path.join("output");
+                    self.runner.set_output_dir(default_out.clone());
                     let _ = self.tx.send(AppMsg::LogMessage(format!(
-                        "PNG load failed: {}, trying binary...",
-                        e
+                        "Output dir auto-set to: {}",
+                        default_out.display()
                     )));
+                }
+
+                // Populate mapping editor with available cursor files
+                let mut sources = Vec::new();
+                if let Ok(entries) = std::fs::read_dir(path) {
+                    for entry in entries.flatten() {
+                        let entry_path = entry.path();
+                        if let Some(ext) = entry_path.extension() {
+                            let ext_str = ext.to_string_lossy().to_lowercase();
+                            if (ext_str == "ani" || ext_str == "cur")
+                                && let Some(stem) = entry_path.file_stem()
+                            {
+                                sources.push(stem.to_string_lossy().to_string());
+                            }
+                        }
+                    }
+                }
+                self.mapping_editor
+                    .set_available_sources(sources, &self.tx);
+
+                let cursors = load_cursor_folder_from_pngs(path).ok().filter(|v| !v.is_empty()).map(Ok).unwrap_or_else(|| {
                     load_cursor_folder(path)
                 });
 
