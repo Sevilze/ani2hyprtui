@@ -77,7 +77,9 @@ impl RunnerState {
 impl Component for RunnerState {
     fn update(&mut self, msg: &AppMsg) -> Option<AppMsg> {
         match msg {
-            AppMsg::PipelineStarted => {
+            AppMsg::PipelineStarted
+            | AppMsg::ConvertXCursorOnly
+            | AppMsg::ConvertPNGOnly => {
                 self.status = PipelineStatus::Running;
                 self.files_processed = 0;
             }

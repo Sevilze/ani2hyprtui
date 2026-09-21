@@ -25,8 +25,15 @@ use crate::config::Config;
 use crate::event::AppMsg;
 use crate::model::cursor;
 use crate::pipeline::cursor_io::{load_cursor_folder, load_cursor_folder_from_pngs};
-use crate::pipeline_worker::PipelineWorker;
+use crate::pipeline::worker::PipelineWorker;
 use crate::widgets::theme::get_theme;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivePipeline {
+    Full,
+    XCursor,
+    Png,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -119,6 +126,7 @@ pub struct App {
     pub rx: Receiver<AppMsg>,
     pub focus: Focus,
     pub modified_cursors: HashSet<String>,
+    pub active_pipeline: Option<ActivePipeline>,
 }
 
 impl App {
@@ -158,6 +166,7 @@ impl App {
             rx,
             focus: Focus::FileBrowser,
             modified_cursors: HashSet::new(),
+            active_pipeline: None,
         }
     }
 
@@ -179,7 +188,8 @@ impl App {
                 let area = f.area();
                 let theme = get_theme();
 
-                f.buffer_mut().set_style(area, Style::default().bg(theme.surface));
+                f.buffer_mut()
+                    .set_style(area, Style::default().bg(theme.surface));
 
                 // Main layout: vertical split into content and status bar
                 let main_chunks = Layout::default()
@@ -279,7 +289,6 @@ impl App {
                     }
                 );
 
-
                 let status = Paragraph::new(status_text)
                     .style(Style::default().fg(theme.text_secondary))
                     .alignment(Alignment::Center);
@@ -341,6 +350,7 @@ impl App {
             | AppMsg::ConvertXCursorOnly
             | AppMsg::ConvertPNGOnly
             | AppMsg::PipelineCompleted(_)
+            | AppMsg::PipelineFailed(_)
             | AppMsg::XCursorGenerated(_) => {
                 self.handle_pipeline_msg(&msg);
             }
@@ -406,6 +416,7 @@ impl App {
                     self.runner.input_dir.clone(),
                     self.runner.output_dir.clone(),
                 ) {
+                    self.active_pipeline = Some(ActivePipeline::Full);
                     let theme_name = self.get_theme_name(&input_dir);
                     let mapping = self.mapping_editor.mapping.clone();
                     let selected_sizes: Vec<u32> = self
@@ -433,8 +444,13 @@ impl App {
                     self.runner.input_dir.clone(),
                     self.runner.output_dir.clone(),
                 ) {
-                    self.pipeline_worker
-                        .start_ani_to_xcur_conversion(input_dir, output_dir);
+                    self.active_pipeline = Some(ActivePipeline::XCursor);
+                    let folder_name = self.get_xcursor_output_name(&input_dir);
+                    self.pipeline_worker.start_ani_to_xcur_conversion(
+                        input_dir,
+                        output_dir,
+                        folder_name,
+                    );
                 } else {
                     let _ = self.tx.send(AppMsg::ErrorOccurred(
                         "Cannot start pipeline: input or output directory not set".to_string(),
@@ -446,8 +462,13 @@ impl App {
                     self.runner.input_dir.clone(),
                     self.runner.output_dir.clone(),
                 ) {
-                    self.pipeline_worker
-                        .start_ani_to_png_conversion(input_dir, output_dir);
+                    self.active_pipeline = Some(ActivePipeline::Png);
+                    let folder_name = self.get_png_output_name(&input_dir);
+                    self.pipeline_worker.start_ani_to_png_conversion(
+                        input_dir,
+                        output_dir,
+                        folder_name,
+                    );
                 } else {
                     let _ = self.tx.send(AppMsg::ErrorOccurred(
                         "Cannot start pipeline: input or output directory not set".to_string(),
@@ -455,12 +476,18 @@ impl App {
                 }
             }
             AppMsg::PipelineCompleted(_count) => {
-                if let Some(output_dir) = &self.runner.output_dir {
+                if self.active_pipeline == Some(ActivePipeline::Full)
+                    && let Some(output_dir) = &self.runner.output_dir
+                {
                     let png_dir = output_dir.join("png_intermediate");
                     if png_dir.exists() {
-                        let _ = self.tx.send(AppMsg::CursorSelected(png_dir));
+                        self.load_cursors_from_path(&png_dir);
                     }
                 }
+                self.active_pipeline = None;
+            }
+            AppMsg::PipelineFailed(_) => {
+                self.active_pipeline = None;
             }
             AppMsg::XCursorGenerated(path) => {
                 let _ = self.tx.send(AppMsg::LogMessage(format!(
@@ -582,74 +609,84 @@ impl App {
                 }
                 sources.sort();
                 sources.dedup();
-                self.mapping_editor
-                    .set_available_sources(sources, &self.tx);
+                self.mapping_editor.set_available_sources(sources, &self.tx);
 
-                let cursors = load_cursor_folder_from_pngs(path).ok().filter(|v| !v.is_empty()).map(Ok).unwrap_or_else(|| {
-                    load_cursor_folder(path)
-                });
-
-                match cursors {
-                    Ok(cursors) => {
-                        let _ = self.tx.send(AppMsg::LogMessage(format!(
-                            "Loaded {} cursors",
-                            cursors.len()
-                        )));
-
-                        let mut converted_cursors: Vec<cursor::CursorMeta> = cursors
-                            .into_iter()
-                            .map(|c| {
-                                let mut variants: Vec<cursor::SizeVariant> = c
-                                    .variants
-                                    .into_iter()
-                                    .map(|v| cursor::SizeVariant {
-                                        size: v.size,
-                                        frames: v
-                                            .frames
-                                            .into_iter()
-                                            .map(|f| cursor::Frame {
-                                                png_path: f.png_path,
-                                                delay_ms: f.delay_ms,
-                                            })
-                                            .collect(),
-                                        hotspot: v.hotspot,
-                                    })
-                                    .collect();
-                                variants.sort_by_key(|v| v.size);
-
-                                cursor::CursorMeta {
-                                    x11_name: c.x11_name,
-                                    variants,
-                                }
-                            })
-                            .collect();
-
-                        converted_cursors.sort_by(|a, b| a.x11_name.cmp(&b.x11_name));
-
-                        if !converted_cursors.is_empty() {
-                            let _ = self.tx.send(AppMsg::LogMessage(format!(
-                                "Sending {} cursors to editor",
-                                converted_cursors.len()
-                            )));
-                            let _ = self.tx.send(AppMsg::CursorLoaded(converted_cursors));
-                        } else {
-                            let _ = self.tx.send(AppMsg::LogMessage(
-                                "No cursors found in selected directory".to_string(),
-                            ));
-                        }
-                    }
-                    Err(e) => {
-                        let _ = self.tx.send(AppMsg::ErrorOccurred(format!(
-                            "Failed to load cursors: {}",
-                            e
-                        )));
-                    }
-                }
+                self.load_cursors_from_path(path);
             }
             AppMsg::CursorLoaded(_) => {
                 // Handled by Editor component
             }
             _ => {}
+        }
+    }
+
+    fn load_cursors_from_path(&self, path: &Path) {
+        let _ = self.tx.send(AppMsg::LogMessage(format!(
+            "Loading cursors from: {}",
+            path.display()
+        )));
+
+        let cursors = load_cursor_folder_from_pngs(path)
+            .ok()
+            .filter(|v| !v.is_empty())
+            .map(Ok)
+            .unwrap_or_else(|| load_cursor_folder(path));
+
+        match cursors {
+            Ok(cursors) => {
+                let _ = self.tx.send(AppMsg::LogMessage(format!(
+                    "Loaded {} cursors",
+                    cursors.len()
+                )));
+
+                let mut converted_cursors: Vec<cursor::CursorMeta> = cursors
+                    .into_iter()
+                    .map(|c| {
+                        let mut variants: Vec<cursor::SizeVariant> = c
+                            .variants
+                            .into_iter()
+                            .map(|v| cursor::SizeVariant {
+                                size: v.size,
+                                frames: v
+                                    .frames
+                                    .into_iter()
+                                    .map(|f| cursor::Frame {
+                                        png_path: f.png_path,
+                                        delay_ms: f.delay_ms,
+                                    })
+                                    .collect(),
+                                hotspot: v.hotspot,
+                            })
+                            .collect();
+                        variants.sort_by_key(|v| v.size);
+
+                        cursor::CursorMeta {
+                            x11_name: c.x11_name,
+                            variants,
+                        }
+                    })
+                    .collect();
+
+                converted_cursors.sort_by(|a, b| a.x11_name.cmp(&b.x11_name));
+
+                if !converted_cursors.is_empty() {
+                    let _ = self.tx.send(AppMsg::LogMessage(format!(
+                        "Sending {} cursors to editor",
+                        converted_cursors.len()
+                    )));
+                    let _ = self.tx.send(AppMsg::CursorLoaded(converted_cursors));
+                } else {
+                    let _ = self.tx.send(AppMsg::LogMessage(
+                        "No cursors found in selected directory".to_string(),
+                    ));
+                }
+            }
+            Err(e) => {
+                let _ = self.tx.send(AppMsg::ErrorOccurred(format!(
+                    "Failed to load cursors: {}",
+                    e
+                )));
+            }
         }
     }
 
@@ -677,6 +714,30 @@ impl App {
                 .and_then(|n| n.to_str())
                 .unwrap_or("ConvertedCursors")
                 .to_string()
+        }
+    }
+
+    fn get_xcursor_output_name(&self, input_dir: &Path) -> String {
+        if !self.theme_overrides.output_name.trim().is_empty() {
+            self.theme_overrides.output_name.trim().to_string()
+        } else {
+            let base = input_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("ConvertedCursors");
+            format!("{} - X11", base)
+        }
+    }
+
+    fn get_png_output_name(&self, input_dir: &Path) -> String {
+        if !self.theme_overrides.output_name.trim().is_empty() {
+            self.theme_overrides.output_name.trim().to_string()
+        } else {
+            let base = input_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("ConvertedCursors");
+            format!("{} - PNG", base)
         }
     }
 

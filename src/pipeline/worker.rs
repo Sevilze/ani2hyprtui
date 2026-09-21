@@ -13,10 +13,10 @@ use walkdir::WalkDir;
 
 use crate::event::AppMsg;
 use crate::model::mapping::CursorMapping;
-use crate::pipeline::hyprcursor;
-use crate::pipeline::win2xcur::converter::{ConversionOptions, convert_windows_cursor};
-use crate::pipeline::xcur2png::{ExtractOptions, extract_to_pngs};
-use crate::pipeline::xcursor_gen::XCursorThemeBuilder;
+use super::hyprcursor;
+use super::win2xcur::converter::{ConversionOptions, convert_windows_cursor};
+use super::xcur2png::{ExtractOptions, extract_to_pngs};
+use super::xcursor_gen::XCursorThemeBuilder;
 
 pub struct PipelineWorker {
     tx: Sender<AppMsg>,
@@ -32,13 +32,18 @@ impl PipelineWorker {
         self.thread_count = count;
     }
 
-    pub fn start_ani_to_png_conversion(&self, input_dir: PathBuf, output_dir: PathBuf) {
+    pub fn start_ani_to_png_conversion(
+        &self,
+        input_dir: PathBuf,
+        output_dir: PathBuf,
+        folder_name: String,
+    ) {
         let tx = self.tx.clone();
         let thread_count = self.thread_count;
 
         thread::spawn(move || {
             if let Err(e) =
-                Self::run_ani_to_png_pipeline(&input_dir, &output_dir, &tx, thread_count)
+                Self::run_ani_to_png_pipeline(&input_dir, &output_dir, &folder_name, &tx, thread_count)
             {
                 let _ = tx.send(AppMsg::PipelineFailed(format!("{}", e)));
             }
@@ -168,13 +173,15 @@ impl PipelineWorker {
     fn run_ani_to_png_pipeline(
         input_dir: &Path,
         output_dir: &Path,
+        folder_name: &str,
         tx: &Sender<AppMsg>,
         thread_count: usize,
     ) -> Result<()> {
-        fs::create_dir_all(output_dir)?;
+        let target_dir = output_dir.join(folder_name);
+        fs::create_dir_all(&target_dir)?;
         let _ = tx.send(AppMsg::LogMessage(format!(
             "Created output directory: {}",
-            output_dir.display()
+            target_dir.display()
         )));
 
         let cursor_files = Self::find_cursor_files(input_dir);
@@ -192,19 +199,17 @@ impl PipelineWorker {
             total_files
         )));
 
-        let xcur_dir = output_dir.join("_xcur_intermediate");
-        fs::create_dir_all(&xcur_dir)?;
+        let temp_dir = tempfile::tempdir()?;
+        let xcur_dir = temp_dir.path();
 
         let (processed, failed) = Self::convert_batch(
             &cursor_files,
-            &xcur_dir,
-            Some(output_dir),
+            xcur_dir,
+            Some(&target_dir),
             Vec::new(),
             tx,
             thread_count,
         )?;
-
-        let _ = fs::remove_dir_all(&xcur_dir);
 
         if failed > 0 {
             let _ = tx.send(AppMsg::LogMessage(format!(
@@ -213,17 +218,26 @@ impl PipelineWorker {
             )));
         }
 
+        let _ = tx.send(AppMsg::LogMessage(format!(
+            "PNG files generated in {}",
+            target_dir.display()
+        )));
         let _ = tx.send(AppMsg::PipelineCompleted(processed));
         Ok(())
     }
 
-    pub fn start_ani_to_xcur_conversion(&self, input_dir: PathBuf, output_dir: PathBuf) {
+    pub fn start_ani_to_xcur_conversion(
+        &self,
+        input_dir: PathBuf,
+        output_dir: PathBuf,
+        folder_name: String,
+    ) {
         let tx = self.tx.clone();
         let thread_count = self.thread_count;
 
         thread::spawn(move || {
             if let Err(e) =
-                Self::run_ani_to_xcur_pipeline(&input_dir, &output_dir, &tx, thread_count)
+                Self::run_ani_to_xcur_pipeline(&input_dir, &output_dir, &folder_name, &tx, thread_count)
             {
                 let _ = tx.send(AppMsg::PipelineFailed(format!("{}", e)));
             }
@@ -233,10 +247,16 @@ impl PipelineWorker {
     fn run_ani_to_xcur_pipeline(
         input_dir: &Path,
         output_dir: &Path,
+        folder_name: &str,
         tx: &Sender<AppMsg>,
         thread_count: usize,
     ) -> Result<()> {
-        fs::create_dir_all(output_dir)?;
+        let target_dir = output_dir.join(folder_name);
+        fs::create_dir_all(&target_dir)?;
+        let _ = tx.send(AppMsg::LogMessage(format!(
+            "Created output directory: {}",
+            target_dir.display()
+        )));
 
         let cursor_files = Self::find_cursor_files(input_dir);
         let total_files = cursor_files.len();
@@ -255,13 +275,17 @@ impl PipelineWorker {
 
         let (processed, _) = Self::convert_batch(
             &cursor_files,
-            output_dir,
+            &target_dir,
             None,
             Vec::new(),
             tx,
             thread_count,
         )?;
 
+        let _ = tx.send(AppMsg::LogMessage(format!(
+            "XCursor files generated in {}",
+            target_dir.display()
+        )));
         let _ = tx.send(AppMsg::PipelineCompleted(processed));
         Ok(())
     }
@@ -625,7 +649,7 @@ mod tests {
         assert_eq!(processed + failed, 10);
 
         let mut msg_count = 0;
-        while let Ok(_) = rx.try_recv() {
+        while rx.try_recv().is_ok() {
             msg_count += 1;
         }
         assert!(msg_count > 0);

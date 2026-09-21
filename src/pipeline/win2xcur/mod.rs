@@ -89,7 +89,7 @@ mod tests {
 
         match result {
             Ok(x11_data) => {
-                assert!(x11_data.len() > 0, "Empty output");
+                assert!(!x11_data.is_empty(), "Empty output");
                 assert_eq!(&x11_data[0..4], b"Xcur", "Missing X11 magic bytes");
                 println!("Successfully converted: {} bytes", x11_data.len());
             }

@@ -4,7 +4,6 @@ mod config;
 mod event;
 mod model;
 pub mod pipeline;
-mod pipeline_worker;
 mod widgets;
 
 fn main() {
