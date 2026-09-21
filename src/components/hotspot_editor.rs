@@ -27,6 +27,7 @@ pub struct HotspotEditorState {
     pub cursors: Vec<CursorMeta>,
     pub selected_cursor: usize,
     pub selected_variant: usize,
+    pub preferred_size: Option<u32>,
 
     // Edits
     pub modified_hotspots: HashSet<String>,
@@ -55,6 +56,7 @@ impl HotspotEditorState {
             cursors: Vec::new(),
             selected_cursor: 0,
             selected_variant: 0,
+            preferred_size: None,
             modified_hotspots: HashSet::new(),
             list_state: ListState::default(),
             scroll_state: ScrollbarState::default(),
@@ -106,11 +108,28 @@ impl HotspotEditorState {
         }
     }
 
+    fn sync_variant_to_preferred(&mut self) {
+        if let Some(cursor) = self.cursors.get(self.selected_cursor) {
+            if let Some(target_size) = self.preferred_size
+                && let Some(idx) = cursor.variants.iter().position(|v| v.size == target_size)
+            {
+                self.selected_variant = idx;
+            } else {
+                self.selected_variant = self
+                    .selected_variant
+                    .min(cursor.variants.len().saturating_sub(1));
+                if let Some(variant) = cursor.variants.get(self.selected_variant) {
+                    self.preferred_size = Some(variant.size);
+                }
+            }
+        }
+    }
+
     fn next_cursor(&mut self) {
         if self.selected_cursor < self.cursors.len().saturating_sub(1) {
             self.selected_cursor += 1;
             self.frame_ix = 0;
-            self.selected_variant = 0;
+            self.sync_variant_to_preferred();
             self.list_state.select(Some(self.selected_cursor));
             self.scroll_state = self.scroll_state.position(self.selected_cursor);
             self.reset_animation_timer();
@@ -121,7 +140,7 @@ impl HotspotEditorState {
         if self.selected_cursor > 0 {
             self.selected_cursor -= 1;
             self.frame_ix = 0;
-            self.selected_variant = 0;
+            self.sync_variant_to_preferred();
             self.list_state.select(Some(self.selected_cursor));
             self.scroll_state = self.scroll_state.position(self.selected_cursor);
             self.reset_animation_timer();
@@ -129,12 +148,22 @@ impl HotspotEditorState {
     }
 
     fn next_variant(&mut self) {
-        if let Some(cursor) = self.cursors.get(self.selected_cursor)
-            && self.selected_variant < cursor.variants.len().saturating_sub(1)
+        let max_idx = self
+            .cursors
+            .get(self.selected_cursor)
+            .map(|c| c.variants.len().saturating_sub(1));
+
+        if let Some(max) = max_idx
+            && self.selected_variant < max
         {
             self.selected_variant += 1;
             self.frame_ix = 0;
             self.reset_animation_timer();
+            self.preferred_size = self
+                .cursors
+                .get(self.selected_cursor)
+                .and_then(|c| c.variants.get(self.selected_variant))
+                .map(|v| v.size);
         }
     }
 
@@ -143,6 +172,11 @@ impl HotspotEditorState {
             self.selected_variant -= 1;
             self.frame_ix = 0;
             self.reset_animation_timer();
+            self.preferred_size = self
+                .cursors
+                .get(self.selected_cursor)
+                .and_then(|c| c.variants.get(self.selected_variant))
+                .map(|v| v.size);
         }
     }
 
@@ -162,10 +196,12 @@ impl HotspotEditorState {
                 && let Some(idx) = cursor.variants.iter().position(|v| v.size == size)
             {
                 self.selected_variant = idx;
+                self.preferred_size = Some(size);
             } else {
                 self.selected_variant = self
                     .selected_variant
                     .min(cursor.variants.len().saturating_sub(1));
+                self.preferred_size = cursor.variants.get(self.selected_variant).map(|v| v.size);
             }
         }
     }
@@ -216,10 +252,12 @@ impl HotspotEditorState {
                 && let Some(idx) = cursor.variants.iter().position(|v| v.size == size)
             {
                 self.selected_variant = idx;
+                self.preferred_size = Some(size);
             } else {
                 self.selected_variant = self
                     .selected_variant
                     .min(cursor.variants.len().saturating_sub(1));
+                self.preferred_size = cursor.variants.get(self.selected_variant).map(|v| v.size);
             }
         }
         self.preview.clear_cache();
@@ -412,12 +450,19 @@ impl Component for HotspotEditorState {
                 self.cursors = cursors.clone();
                 self.selected_cursor = 0;
 
-                // Default to 48x48
+                // Select preferred size if available, otherwise default to 48x48
                 self.selected_variant = 0;
-                if let Some(cursor) = self.cursors.first()
-                    && let Some(idx) = cursor.variants.iter().position(|v| v.size == 48)
-                {
-                    self.selected_variant = idx;
+                if let Some(cursor) = self.cursors.first() {
+                    if let Some(pref) = self.preferred_size
+                        && let Some(idx) = cursor.variants.iter().position(|v| v.size == pref)
+                    {
+                        self.selected_variant = idx;
+                    } else if let Some(idx) = cursor.variants.iter().position(|v| v.size == 48) {
+                        self.selected_variant = idx;
+                        self.preferred_size = Some(48);
+                    } else if let Some(first_var) = cursor.variants.first() {
+                        self.preferred_size = Some(first_var.size);
+                    }
                 }
                 self.frame_ix = 0;
                 self.modified_hotspots.clear();
@@ -519,3 +564,65 @@ impl Component for HotspotEditorState {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::cursor::{CursorMeta, Frame, SizeVariant};
+    use std::path::PathBuf;
+
+    fn dummy_cursor(name: &str, sizes: &[u32]) -> CursorMeta {
+        CursorMeta {
+            x11_name: name.to_string(),
+            variants: sizes
+                .iter()
+                .map(|&size| SizeVariant {
+                    size,
+                    hotspot: (0, 0),
+                    frames: vec![Frame {
+                        png_path: PathBuf::from(format!("/tmp/{}_{}.png", name, size)),
+                        delay_ms: 50,
+                    }],
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn test_size_variant_persists_when_navigating_cursors() {
+        let mut editor = HotspotEditorState::default();
+        let cursors = vec![
+            dummy_cursor("arrow", &[24, 32, 48]),
+            dummy_cursor("hand", &[24, 32, 48]),
+        ];
+        editor.update(&AppMsg::CursorLoaded(cursors));
+
+        // Initially defaults to 48 (index 2)
+        assert_eq!(editor.selected_cursor, 0);
+        assert_eq!(editor.selected_variant, 2);
+
+        // Cycle to variant index 0 (size 24)
+        editor.prev_variant();
+        editor.prev_variant();
+        assert_eq!(editor.selected_variant, 0);
+        assert_eq!(editor.preferred_size, Some(24));
+
+        // Move to next cursor
+        editor.next_cursor();
+        assert_eq!(editor.selected_cursor, 1);
+        // Variant should persist as size 24 (index 0), not reset to 0 or 48
+        assert_eq!(editor.selected_variant, 0);
+
+        // Cycle to variant index 1 (size 32)
+        editor.next_variant();
+        assert_eq!(editor.selected_variant, 1);
+        assert_eq!(editor.preferred_size, Some(32));
+
+        // Move back to prev cursor
+        editor.prev_cursor();
+        assert_eq!(editor.selected_cursor, 0);
+        // Variant should persist as size 32 (index 1)
+        assert_eq!(editor.selected_variant, 1);
+    }
+}
+

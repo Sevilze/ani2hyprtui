@@ -370,6 +370,20 @@ impl PipelineWorker {
         fs::create_dir_all(&hyprcursors_dir)?;
         fs::create_dir_all(&png_dir)?;
 
+        let manifest_path = theme_output.join("manifest.hl");
+        if !manifest_path.exists()
+            && let Ok(mut f) = fs::File::create(&manifest_path)
+        {
+            use std::io::Write;
+            let _ = writeln!(f, "name = {}", theme_name);
+            let _ = writeln!(
+                f,
+                "description = Automatically extracted with ani2hyprtui"
+            );
+            let _ = writeln!(f, "version = 1.0");
+            let _ = writeln!(f, "cursors_directory = hyprcursors");
+        }
+
         let default_options = ConversionOptions::new();
 
         let pool = rayon::ThreadPoolBuilder::new()

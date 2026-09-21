@@ -37,4 +37,10 @@ pub enum AppMsg {
     ErrorOccurred(String),
     LogMessage(String),
     ThreadCountChanged(usize),
+    CursorThemeApplied {
+        theme_name: String,
+        size: u32,
+        success: bool,
+        message: String,
+    },
 }

@@ -670,3 +670,156 @@ fn parse_xconfig(path: &Path) -> Result<Vec<XConfigEntry>> {
 
     Ok(entries)
 }
+
+pub fn scalable_cursor_sizes() -> Vec<u32> {
+    vec![16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 96, 128]
+}
+
+pub fn detect_theme_sizes(theme_dir: &Path) -> Vec<u32> {
+    let hyprcursors_dir = theme_dir.join("hyprcursors");
+    if hyprcursors_dir.is_dir()
+        && let Ok(entries) = fs::read_dir(&hyprcursors_dir)
+    {
+        let mut hlc_files = Vec::new();
+        let mut shape_dirs = Vec::new();
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("hlc") {
+                hlc_files.push(path);
+            } else if path.is_dir() {
+                shape_dirs.push(path);
+            }
+        }
+
+        hlc_files.sort();
+        shape_dirs.sort();
+
+        for hlc_path in hlc_files {
+            if let Ok(file) = File::open(&hlc_path)
+                && let Ok(mut archive) = zip::ZipArchive::new(file)
+            {
+                for i in 0..archive.len() {
+                    if let Ok(mut zf) = archive.by_index(i)
+                        && zf.name() == "meta.hl"
+                    {
+                        let mut content = String::new();
+                        use std::io::Read;
+                        if zf.read_to_string(&mut content).is_ok() {
+                            let sizes = extract_sizes_from_meta_hl(&content);
+                            if !sizes.is_empty() {
+                                return sizes;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for sdir in shape_dirs {
+            let meta_hl = sdir.join("meta.hl");
+            if meta_hl.exists()
+                && let Ok(content) = fs::read_to_string(meta_hl)
+            {
+                let sizes = extract_sizes_from_meta_hl(&content);
+                if !sizes.is_empty() {
+                    return sizes;
+                }
+            }
+            let meta_toml = sdir.join("meta.toml");
+            if meta_toml.exists()
+                && let Ok(shape) = parse_meta_toml(&meta_toml, "shape")
+            {
+                let mut sizes: Vec<u32> = shape.images.iter().map(|img| img.size).collect();
+                if sizes.contains(&0) {
+                    return scalable_cursor_sizes();
+                }
+                sizes.sort_unstable();
+                sizes.dedup();
+                if !sizes.is_empty() {
+                    return sizes;
+                }
+            }
+        }
+    }
+
+    let cursors_dir = theme_dir.join("cursors");
+    if cursors_dir.is_dir()
+        && let Ok(entries) = fs::read_dir(&cursors_dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Ok(real_path) = fs::canonicalize(&path)
+                && real_path.is_file()
+                && let Ok(bytes) = fs::read(real_path)
+                && let Some(images) = xcursor::parser::parse_xcursor(&bytes)
+            {
+                let mut sizes: Vec<u32> = images.into_iter().map(|img| img.size).collect();
+                sizes.sort_unstable();
+                sizes.dedup();
+                if !sizes.is_empty() {
+                    return sizes;
+                }
+            }
+        }
+    }
+
+    vec![24, 32, 48, 64]
+}
+
+fn extract_sizes_from_meta_hl(content: &str) -> Vec<u32> {
+    let mut sizes = Vec::new();
+    let mut is_svg = false;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some((key, val)) = line.split_once('=')
+            && key.trim() == "define_size"
+        {
+            let parts: Vec<&str> = val.split(',').map(|s| s.trim()).collect();
+            if !parts.is_empty()
+                && let Ok(sz) = parts[0].parse::<u32>()
+            {
+                if sz == 0 {
+                    is_svg = true;
+                } else {
+                    sizes.push(sz);
+                }
+            }
+            if parts.len() >= 2 && parts[1].ends_with(".svg") {
+                is_svg = true;
+            }
+        }
+    }
+
+    if is_svg {
+        return scalable_cursor_sizes();
+    }
+
+    sizes.sort_unstable();
+    sizes.dedup();
+    sizes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_sizes_from_meta_hl_bitmap() {
+        let meta = "resize_algorithm = none\n\
+                    define_size = 24, left_ptr_000.png, 100\n\
+                    define_size = 32, left_ptr_001.png, 100\n\
+                    define_size = 48, left_ptr_002.png, 100\n\
+                    define_size = 24, left_ptr_003.png, 100\n";
+        let sizes = extract_sizes_from_meta_hl(meta);
+        assert_eq!(sizes, vec![24, 32, 48]);
+    }
+
+    #[test]
+    fn test_extract_sizes_from_meta_hl_svg() {
+        let meta = "resize_algorithm = none\ndefine_size = 0, left_ptr.svg\n";
+        let sizes = extract_sizes_from_meta_hl(meta);
+        assert_eq!(sizes, scalable_cursor_sizes());
+    }
+}

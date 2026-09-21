@@ -170,11 +170,6 @@ impl Component for FileBrowserState {
                         let _ = tx.send(AppMsg::CursorSelected(dir));
                     }
                 }
-                KeyCode::Char('l') => {
-                    if let Some(tx) = &self.tx {
-                        let _ = tx.send(AppMsg::CursorSelected(self.current_dir.clone()));
-                    }
-                }
                 _ => {}
             },
             _ => {}

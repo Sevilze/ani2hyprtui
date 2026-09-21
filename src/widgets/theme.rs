@@ -58,6 +58,10 @@ impl ThemeType {
         }
     }
 
+    pub fn from_name(name: &str) -> Option<ThemeType> {
+        Self::all().into_iter().find(|t| t.name().eq_ignore_ascii_case(name))
+    }
+
     pub fn next(&self) -> ThemeType {
         let all = Self::all();
         let idx = all.iter().position(|t| t == self).unwrap_or(0);

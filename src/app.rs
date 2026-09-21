@@ -1,119 +1,31 @@
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{self, Event, KeyEvent},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{
-    Terminal,
-    backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout},
-    style::Style,
-    widgets::Paragraph,
-};
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use ratatui::{Terminal, backend::CrosstermBackend};
+use std::collections::HashSet;
+use std::path::Path;
 use std::{io, thread, time::Duration};
 
+pub mod focus;
+pub mod handlers;
+pub mod keymap;
+pub mod ui;
+
+pub use focus::{ActivePipeline, Focus};
+
 use crate::components::{
-    Component, file_browser::FileBrowserState, hotspot_editor::HotspotEditorState, logs::LogsState,
-    mapping_editor::MappingEditorState, runner::RunnerState, settings::SettingsState,
-    theme_overrides::ThemeOverridesState,
+    Component, file_browser::FileBrowserState, hotspot_editor::HotspotEditorState,
+    hyprctl::HyprctlState, logs::LogsState, mapping_editor::MappingEditorState,
+    runner::RunnerState, settings::SettingsState, theme_overrides::ThemeOverridesState,
 };
-use crate::config::Config;
+use crate::config::{AppConfig, Config};
 use crate::event::AppMsg;
-use crate::model::cursor;
-use crate::pipeline::cursor_io::{
-    ensure_variant_for_size, load_cursor_folder, load_cursor_folder_from_pngs,
-};
 use crate::pipeline::worker::PipelineWorker;
-use crate::widgets::theme::get_theme;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ActivePipeline {
-    Full,
-    XCursor,
-    Png,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Focus {
-    FileBrowser,
-    Runner,
-    Overrides,
-    Editor,
-    Logs,
-    Settings,
-    Mapping,
-}
-
-impl Focus {
-    fn next(&self) -> Self {
-        match self {
-            Focus::FileBrowser => Focus::Runner,
-            Focus::Runner => Focus::Overrides,
-            Focus::Overrides => Focus::Editor,
-            Focus::Editor => Focus::Logs,
-            Focus::Logs => Focus::Settings,
-            Focus::Settings => Focus::Mapping,
-            Focus::Mapping => Focus::FileBrowser,
-        }
-    }
-
-    fn prev(&self) -> Self {
-        match self {
-            Focus::FileBrowser => Focus::Mapping,
-            Focus::Runner => Focus::FileBrowser,
-            Focus::Overrides => Focus::Runner,
-            Focus::Editor => Focus::Overrides,
-            Focus::Logs => Focus::Editor,
-            Focus::Settings => Focus::Logs,
-            Focus::Mapping => Focus::Settings,
-        }
-    }
-
-    fn left(&self) -> Option<Self> {
-        match self {
-            Focus::Editor => Some(Focus::FileBrowser),
-            Focus::Logs => Some(Focus::Overrides),
-            Focus::Mapping => Some(Focus::Editor),
-            Focus::Settings => Some(Focus::Logs),
-            _ => None,
-        }
-    }
-
-    fn right(&self) -> Option<Self> {
-        match self {
-            Focus::FileBrowser => Some(Focus::Editor),
-            Focus::Runner => Some(Focus::Editor),
-            Focus::Overrides => Some(Focus::Logs),
-            Focus::Editor => Some(Focus::Mapping),
-            Focus::Logs => Some(Focus::Settings),
-            _ => None,
-        }
-    }
-
-    fn up(&self) -> Option<Self> {
-        match self {
-            Focus::Runner => Some(Focus::FileBrowser),
-            Focus::Overrides => Some(Focus::Runner),
-            Focus::Logs => Some(Focus::Editor),
-            Focus::Settings => Some(Focus::Mapping),
-            _ => None,
-        }
-    }
-
-    fn down(&self) -> Option<Self> {
-        match self {
-            Focus::FileBrowser => Some(Focus::Runner),
-            Focus::Runner => Some(Focus::Overrides),
-            Focus::Editor => Some(Focus::Logs),
-            Focus::Mapping => Some(Focus::Settings),
-            _ => None,
-        }
-    }
-}
+use crate::widgets::theme::ThemeType;
 
 pub struct App {
     pub file_browser: FileBrowserState,
@@ -122,6 +34,7 @@ pub struct App {
     pub runner: RunnerState,
     pub logs: LogsState,
     pub settings: SettingsState,
+    pub hyprctl: HyprctlState,
     pub theme_overrides: ThemeOverridesState,
     pub pipeline_worker: PipelineWorker,
     pub tx: Sender<AppMsg>,
@@ -142,26 +55,36 @@ impl App {
         let mut runner = RunnerState::default();
         runner.set_sender(tx.clone());
 
-        // Only set input dir if it's not the default ".", so mapping editor starts hidden
         if config.input_dir.as_path() != Path::new(".") {
             runner.set_input_dir(config.input_dir.clone());
         }
         runner.set_output_dir(config.output_dir.clone());
 
         let mapping_editor = MappingEditorState::new(config.mapping.clone());
-
         let pipeline_worker = PipelineWorker::new(tx.clone(), config.thread_count);
 
-        let mut settings = SettingsState::default();
-        settings.set_thread_count(config.thread_count);
+        let app_config = AppConfig::load();
+        let saved_theme = app_config.theme.as_deref().and_then(ThemeType::from_name);
 
-        Self {
+        if let Some(theme_type) = saved_theme {
+            crate::widgets::theme::set_theme(theme_type);
+        }
+
+        let mut settings = SettingsState::default();
+        if let Some(theme_type) = saved_theme {
+            settings.select_theme(theme_type);
+        }
+        let mut hyprctl = HyprctlState::default();
+        hyprctl.set_sender(tx.clone());
+
+        let mut app = Self {
             file_browser,
             cursor_editor: HotspotEditorState::new_with_picker(picker),
             mapping_editor,
             runner,
             logs: LogsState::default(),
             settings,
+            hyprctl,
             theme_overrides: ThemeOverridesState::default(),
             pipeline_worker,
             tx,
@@ -169,7 +92,9 @@ impl App {
             focus: Focus::FileBrowser,
             modified_cursors: HashSet::new(),
             active_pipeline: None,
-        }
+        };
+        app.sync_hyprctl_dirs();
+        app
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -183,134 +108,23 @@ impl App {
         self.start_tick_thread();
 
         let tick_rate = Duration::from_millis(16);
-        let mut res: Result<()> = Ok(());
+        let res: Result<()> = Ok(());
 
         'outer: loop {
-            terminal.draw(|f| {
-                let area = f.area();
-                let theme = get_theme();
+            terminal.draw(|f| ui::draw_ui(self, f))?;
 
-                f.buffer_mut()
-                    .set_style(area, Style::default().bg(theme.surface));
-
-                // Main layout: vertical split into content and status bar
-                let main_chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(1), Constraint::Length(1)])
-                    .split(area);
-
-                if self.cursor_editor.maximized {
-                    self.cursor_editor
-                        .render(main_chunks[0], f.buffer_mut(), true);
-                } else {
-                    // Always show all three columns
-                    let columns = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([
-                            Constraint::Percentage(25), // Left: File Browser, Runner, Overrides
-                            Constraint::Percentage(50), // Middle: Cursor Editor, Logs
-                            Constraint::Percentage(25), // Right: Mapping Editor, Settings
-                        ])
-                        .split(main_chunks[0]);
-
-                    // Left Column
-                    let left_chunks = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([
-                            Constraint::Percentage(40), // File Browser
-                            Constraint::Percentage(20), // Runner
-                            Constraint::Percentage(40), // Overrides
-                        ])
-                        .split(columns[0]);
-
-                    // Middle Column
-                    let middle_chunks = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([
-                            Constraint::Percentage(70), // Cursor Editor
-                            Constraint::Percentage(30), // Logs
-                        ])
-                        .split(columns[1]);
-
-                    // Right Column
-                    let right_chunks = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([
-                            Constraint::Percentage(60), // Mapping Editor
-                            Constraint::Percentage(40), // Settings
-                        ])
-                        .split(columns[2]);
-
-                    // Render components
-                    self.file_browser.render(
-                        left_chunks[0],
-                        f.buffer_mut(),
-                        self.focus == Focus::FileBrowser,
-                    );
-                    self.runner
-                        .render(left_chunks[1], f.buffer_mut(), self.focus == Focus::Runner);
-                    self.theme_overrides.render(
-                        left_chunks[2],
-                        f.buffer_mut(),
-                        self.focus == Focus::Overrides,
-                    );
-
-                    self.cursor_editor.render(
-                        middle_chunks[0],
-                        f.buffer_mut(),
-                        self.focus == Focus::Editor,
-                    );
-                    self.logs
-                        .render(middle_chunks[1], f.buffer_mut(), self.focus == Focus::Logs);
-
-                    self.mapping_editor.render(
-                        right_chunks[0],
-                        f.buffer_mut(),
-                        self.focus == Focus::Mapping,
-                    );
-                    self.settings.render(
-                        right_chunks[1],
-                        f.buffer_mut(),
-                        self.focus == Focus::Settings,
-                    );
-                }
-
-                // Status bar
-                let focus_str = format!("{:?}", self.focus);
-                let status_text = format!(
-                    "q: Quit | Ctrl+hjkl: Navigate | Focus: {} | {}",
-                    focus_str,
-                    match self.focus {
-                        Focus::FileBrowser => "i/o: Set In/Out | Enter: Select | l: Load",
-                        Focus::Runner => "c: Full Convert | x: XCur | p: PNG",
-                        Focus::Overrides => "Tab: Switch Field | Type to edit",
-                        Focus::Editor => {
-                            "Space: Play | ,/.: Frame | [/]: Size | Arrows: Hotspot | S: Save"
-                        }
-                        Focus::Logs => "Logs View",
-                        Focus::Settings => "↑↓/jk: Select | Enter: Apply | ←→/hl: Quick Switch",
-                        Focus::Mapping => "Enter: Edit | s: Save",
-                    }
-                );
-
-                let status = Paragraph::new(status_text)
-                    .style(Style::default().fg(theme.text_secondary))
-                    .alignment(Alignment::Center);
-                f.render_widget(status, main_chunks[1]);
-            })?;
-
-            // Check for messages from tick thread or other sources
             while let Ok(msg) = self.rx.try_recv() {
-                if self.handle_message(msg) {
+                if self.update(msg) {
                     break 'outer;
                 }
             }
 
-            // Poll for keyboard events
             if event::poll(tick_rate)? {
                 match event::read()? {
                     Event::Key(key) => {
-                        if self.handle_key(key) {
+                        if key.kind != crossterm::event::KeyEventKind::Release
+                            && self.handle_key(key)
+                        {
                             break 'outer;
                         }
                     }
@@ -320,18 +134,16 @@ impl App {
             }
         }
 
-        // Restore terminal
-        if let Err(e) = restore_terminal(&mut terminal) {
-            res = Err(e);
-        }
+        restore_terminal(&mut terminal)?;
         res
     }
 
     fn start_tick_thread(&self) {
         let tx = self.tx.clone();
         thread::spawn(move || {
+            let tick_rate = Duration::from_millis(16);
             loop {
-                thread::sleep(Duration::from_millis(16));
+                thread::sleep(tick_rate);
                 if tx.send(AppMsg::Tick).is_err() {
                     break;
                 }
@@ -339,14 +151,8 @@ impl App {
         });
     }
 
-    fn handle_message(&mut self, msg: AppMsg) -> bool {
+    pub fn update(&mut self, msg: AppMsg) -> bool {
         match &msg {
-            AppMsg::Tick => {
-                // Tick is handled by Editor component for animation
-            }
-            AppMsg::MappingChanged(x11_name, _win_name) => {
-                self.modified_cursors.insert(x11_name.clone());
-            }
             AppMsg::InputDirSelected(_) | AppMsg::OutputDirSelected(_) => {
                 self.handle_dir_selection(&msg);
             }
@@ -397,492 +203,93 @@ impl App {
         false
     }
 
-    fn handle_dir_selection(&mut self, msg: &AppMsg) {
-        match msg {
-            AppMsg::InputDirSelected(path) => {
-                self.runner.set_input_dir(path.clone());
-                // Scan directory for available sources (.ani/.cur files)
-                let mut sources = Vec::new();
-                if let Ok(entries) = std::fs::read_dir(path) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if let Some(ext) = path.extension() {
-                            let ext_str = ext.to_string_lossy().to_lowercase();
-                            if (ext_str == "ani" || ext_str == "cur")
-                                && let Some(stem) = path.file_stem()
-                            {
-                                sources.push(stem.to_string_lossy().to_string());
-                            }
-                        }
-                    }
-                }
-                self.mapping_editor.set_available_sources(sources, &self.tx);
-            }
-            AppMsg::OutputDirSelected(path) => {
-                self.runner.set_output_dir(path.clone());
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_pipeline_msg(&mut self, msg: &AppMsg) {
-        match msg {
-            AppMsg::PipelineStarted => {
-                if let (Some(input_dir), Some(output_dir)) = (
-                    self.runner.input_dir.clone(),
-                    self.runner.output_dir.clone(),
-                ) {
-                    self.active_pipeline = Some(ActivePipeline::Full);
-                    let theme_name = self.get_theme_name(&input_dir);
-                    let mapping = self.mapping_editor.mapping.clone();
-                    let selected_sizes: Vec<u32> = self
-                        .theme_overrides
-                        .selected_sizes
-                        .iter()
-                        .cloned()
-                        .collect();
-
-                    self.pipeline_worker.start_full_theme_conversion(
-                        input_dir.clone(),
-                        output_dir.clone(),
-                        theme_name,
-                        mapping,
-                        selected_sizes,
-                    );
-                } else {
-                    let _ = self.tx.send(AppMsg::ErrorOccurred(
-                        "Cannot start pipeline: input or output directory not set".to_string(),
-                    ));
-                }
-            }
-            AppMsg::ConvertXCursorOnly => {
-                if let (Some(input_dir), Some(output_dir)) = (
-                    self.runner.input_dir.clone(),
-                    self.runner.output_dir.clone(),
-                ) {
-                    self.active_pipeline = Some(ActivePipeline::XCursor);
-                    let folder_name = self.get_xcursor_output_name(&input_dir);
-                    self.pipeline_worker.start_ani_to_xcur_conversion(
-                        input_dir,
-                        output_dir,
-                        folder_name,
-                    );
-                } else {
-                    let _ = self.tx.send(AppMsg::ErrorOccurred(
-                        "Cannot start pipeline: input or output directory not set".to_string(),
-                    ));
-                }
-            }
-            AppMsg::ConvertPNGOnly => {
-                if let (Some(input_dir), Some(output_dir)) = (
-                    self.runner.input_dir.clone(),
-                    self.runner.output_dir.clone(),
-                ) {
-                    self.active_pipeline = Some(ActivePipeline::Png);
-                    let folder_name = self.get_png_output_name(&input_dir);
-                    self.pipeline_worker.start_ani_to_png_conversion(
-                        input_dir,
-                        output_dir,
-                        folder_name,
-                    );
-                } else {
-                    let _ = self.tx.send(AppMsg::ErrorOccurred(
-                        "Cannot start pipeline: input or output directory not set".to_string(),
-                    ));
-                }
-            }
-            AppMsg::PipelineCompleted(_count) => {
-                if self.active_pipeline == Some(ActivePipeline::Full)
-                    && let Some(output_dir) = &self.runner.output_dir
-                {
-                    let png_dir = output_dir.join("png_intermediate");
-                    if png_dir.exists() {
-                        self.load_cursors_from_path(&png_dir);
-                    }
-                }
-                self.active_pipeline = None;
-            }
-            AppMsg::PipelineFailed(_) => {
-                self.active_pipeline = None;
-            }
-            AppMsg::XCursorGenerated(path) => {
-                let _ = self.tx.send(AppMsg::LogMessage(format!(
-                    "XCursor theme generated at: {}",
-                    path
-                )));
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_save_msg(&mut self, msg: &AppMsg) {
-        match msg {
-            AppMsg::HotspotsSaved(modified_cursors) => {
-                for c in modified_cursors {
-                    self.modified_cursors.insert(c.clone());
-                }
-                let _ = self.tx.send(AppMsg::MappingSaved);
-            }
-            AppMsg::MappingSaved => {
-                let _ = self.tx.send(AppMsg::LogMessage(
-                    "Saving changes. Triggering incremental update...".to_string(),
-                ));
-
-                if let (Some(input_dir), Some(output_dir)) = (
-                    self.runner.input_dir.clone(),
-                    self.runner.output_dir.clone(),
-                ) {
-                    let theme_name = self.get_theme_name(&input_dir);
-                    let mapping = self.mapping_editor.mapping.clone();
-
-                    if self.modified_cursors.is_empty() {
-                        let _ = self.tx.send(AppMsg::LogMessage(
-                            "No changes detected since last save.".to_string(),
-                        ));
-                    } else {
-                        let modified: Vec<String> = self.modified_cursors.drain().collect();
-                        let _ = self.tx.send(AppMsg::LogMessage(format!(
-                            "Updating {} modified cursors...",
-                            modified.len()
-                        )));
-
-                        let mut hotspot_overrides = HashMap::new();
-                        for cursor_name in &modified {
-                            if let Some(cursor) = self
-                                .cursor_editor
-                                .cursors
-                                .iter()
-                                .find(|c| c.x11_name == *cursor_name)
-                            {
-                                let mut variants_map = HashMap::new();
-                                for variant in &cursor.variants {
-                                    variants_map.insert(variant.size, variant.hotspot);
-                                }
-                                hotspot_overrides.insert(cursor_name.clone(), variants_map);
-                            }
-                        }
-
-                        self.pipeline_worker.start_incremental_theme_update(
-                            input_dir,
-                            output_dir,
-                            theme_name,
-                            mapping,
-                            modified,
-                            hotspot_overrides,
-                        );
-                    }
-                } else {
-                    let _ = self.tx.send(AppMsg::LogMessage(
-                        "Cannot update theme: Input or Output directory not set.".to_string(),
-                    ));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_cursor_msg(&mut self, msg: &AppMsg) {
-        match msg {
-            AppMsg::CursorSelected(path) => {
-                let _ = self.tx.send(AppMsg::LogMessage(format!(
-                    "Loading cursors from: {}",
-                    path.display()
-                )));
-
-                // Auto-sync runner dirs so pipeline can start without manual 'i'/'o'
-                self.runner.set_input_dir(path.clone());
-                if self.runner.output_dir.is_none() {
-                    let default_out = path.join("output");
-                    self.runner.set_output_dir(default_out.clone());
-                    let _ = self.tx.send(AppMsg::LogMessage(format!(
-                        "Output dir auto-set to: {}",
-                        default_out.display()
-                    )));
-                }
-
-                // Populate mapping editor with available cursor files
-                let mut sources = Vec::new();
-                let mut scan_dirs = vec![path.clone()];
-                let nested_cursors = path.join("cursors");
-                if nested_cursors.is_dir() {
-                    scan_dirs.push(nested_cursors);
-                }
-
-                for scan_dir in scan_dirs {
-                    if let Ok(entries) = std::fs::read_dir(scan_dir) {
-                        for entry in entries.flatten() {
-                            let entry_path = entry.path();
-                            if let Some(ext) = entry_path.extension() {
-                                let ext_str = ext.to_string_lossy().to_lowercase();
-                                if (ext_str == "ani" || ext_str == "cur")
-                                    && let Some(stem) = entry_path.file_stem()
-                                {
-                                    sources.push(stem.to_string_lossy().to_string());
-                                }
-                            }
-                        }
-                    }
-                }
-                sources.sort();
-                sources.dedup();
-                self.mapping_editor.set_available_sources(sources, &self.tx);
-
-                self.load_cursors_from_path(path);
-            }
-            AppMsg::CursorLoaded(_) => {
-                // Handled by Editor component
-            }
-            _ => {}
-        }
-    }
-
-    fn load_cursors_from_path(&self, path: &Path) {
-        let _ = self.tx.send(AppMsg::LogMessage(format!(
-            "Loading cursors from: {}",
-            path.display()
-        )));
-
-        let output_dir = self
-            .runner
-            .output_dir
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("./out"));
-        let png_intermediate = output_dir.join("png_intermediate");
-
-        let cursors = load_cursor_folder_from_pngs(path)
-            .ok()
-            .filter(|v| !v.is_empty())
-            .map(Ok)
-            .unwrap_or_else(|| load_cursor_folder(path, &png_intermediate));
-
-        match cursors {
-            Ok(cursors) => {
-                let _ = self.tx.send(AppMsg::LogMessage(format!(
-                    "Loaded {} cursors",
-                    cursors.len()
-                )));
-
-                let mut converted_cursors: Vec<cursor::CursorMeta> = cursors
-                    .into_iter()
-                    .map(|c| {
-                        let mut variants: Vec<cursor::SizeVariant> = c
-                            .variants
-                            .into_iter()
-                            .map(|v| cursor::SizeVariant {
-                                size: v.size,
-                                frames: v
-                                    .frames
-                                    .into_iter()
-                                    .map(|f| cursor::Frame {
-                                        png_path: f.png_path,
-                                        delay_ms: f.delay_ms,
-                                    })
-                                    .collect(),
-                                hotspot: v.hotspot,
-                            })
-                            .collect();
-                        variants.sort_by_key(|v| v.size);
-
-                        cursor::CursorMeta {
-                            x11_name: c.x11_name,
-                            variants,
-                        }
-                    })
-                    .collect();
-
-                let _ = std::fs::create_dir_all(&png_intermediate);
-                let selected_sizes: Vec<u32> = self
-                    .theme_overrides
-                    .selected_sizes
-                    .iter()
-                    .copied()
-                    .collect();
-
-                for cursor in &mut converted_cursors {
-                    for &target_size in &selected_sizes {
-                        ensure_variant_for_size(cursor, target_size, Some(&png_intermediate));
-                    }
-                }
-
-                converted_cursors.sort_by(|a, b| a.x11_name.cmp(&b.x11_name));
-
-                if !converted_cursors.is_empty() {
-                    let _ = self.tx.send(AppMsg::LogMessage(format!(
-                        "Sending {} cursors to editor",
-                        converted_cursors.len()
-                    )));
-                    let _ = self.tx.send(AppMsg::CursorLoaded(converted_cursors));
-                } else {
-                    let _ = self.tx.send(AppMsg::LogMessage(
-                        "No cursors found in selected directory".to_string(),
-                    ));
-                }
-            }
-            Err(e) => {
-                let _ = self.tx.send(AppMsg::ErrorOccurred(format!(
-                    "Failed to load cursors: {}",
-                    e
-                )));
-            }
-        }
-    }
-
-    fn update_components(&mut self, msg: &AppMsg) {
+    pub fn update_components(&mut self, msg: &AppMsg) {
         match msg {
             AppMsg::Key(_) | AppMsg::ThemeSizeToggled { .. } => {}
             _ => {
+                self.sync_hyprctl_dirs();
                 self.file_browser.update(msg);
                 self.cursor_editor.update(msg);
                 self.runner.update(msg);
                 self.logs.update(msg);
                 self.settings.update(msg);
+                if let Some(resp) = self.hyprctl.update(msg) {
+                    let _ = self.tx.send(resp);
+                }
                 self.theme_overrides.update(msg);
                 self.mapping_editor.update(msg);
             }
         }
     }
 
-    fn get_theme_name(&self, input_dir: &Path) -> String {
-        if !self.theme_overrides.output_name.trim().is_empty() {
-            self.theme_overrides.output_name.trim().to_string()
-        } else {
-            input_dir
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("ConvertedCursors")
-                .to_string()
-        }
-    }
-
-    fn get_xcursor_output_name(&self, input_dir: &Path) -> String {
-        if !self.theme_overrides.output_name.trim().is_empty() {
-            self.theme_overrides.output_name.trim().to_string()
-        } else {
-            let base = input_dir
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("ConvertedCursors");
-            format!("{} - X11", base)
-        }
-    }
-
-    fn get_png_output_name(&self, input_dir: &Path) -> String {
-        if !self.theme_overrides.output_name.trim().is_empty() {
-            self.theme_overrides.output_name.trim().to_string()
-        } else {
-            let base = input_dir
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("ConvertedCursors");
-            format!("{} - PNG", base)
-        }
-    }
-
-    fn handle_key(&mut self, key: KeyEvent) -> bool {
-        match (key.code, key.modifiers) {
-            (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                if self.focus == Focus::Mapping && self.mapping_editor.show_popup {
-                    if let Some(msg) = self.mapping_editor.update(&AppMsg::Key(key)) {
-                        let _ = self.tx.send(msg);
-                    }
-                    return false;
-                }
-                return true;
-            }
-            // Window Navigation (Ctrl+hjkl or Ctrl+Arrows)
-            (KeyCode::Left, KeyModifiers::CONTROL)
-            | (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
-                if let Some(focus) = self.focus.left() {
-                    self.focus = focus;
-                }
-            }
-            (KeyCode::Right, KeyModifiers::CONTROL)
-            | (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
-                if let Some(focus) = self.focus.right() {
-                    self.focus = focus;
-                }
-            }
-            (KeyCode::Up, KeyModifiers::CONTROL) | (KeyCode::Char('k'), KeyModifiers::CONTROL) => {
-                if let Some(focus) = self.focus.up() {
-                    self.focus = focus;
-                }
-            }
-            (KeyCode::Down, KeyModifiers::CONTROL)
-            | (KeyCode::Char('j'), KeyModifiers::CONTROL) => {
-                if let Some(focus) = self.focus.down() {
-                    self.focus = focus;
-                }
-            }
-            (KeyCode::Tab, _) => {
-                self.focus = self.focus.next();
-            }
-            (KeyCode::BackTab, _) => {
-                self.focus = self.focus.prev();
-            }
-            _ => {
-                let msg = AppMsg::Key(key);
-                match self.focus {
-                    Focus::FileBrowser => match key.code {
-                        KeyCode::Char('i') => {
-                            let current_dir = self.file_browser.current_dir.clone();
-                            let _ = self.tx.send(AppMsg::InputDirSelected(current_dir));
-                        }
-                        KeyCode::Char('o') => {
-                            let current_dir = self.file_browser.current_dir.clone();
-                            let _ = self.tx.send(AppMsg::OutputDirSelected(current_dir));
-                        }
-                        _ => {
-                            self.file_browser.update(&msg);
-                        }
-                    },
-                    Focus::Runner => match key.code {
-                        KeyCode::Char('c') => {
-                            let _ = self.tx.send(AppMsg::PipelineStarted);
-                        }
-                        KeyCode::Char('x') => {
-                            let _ = self.tx.send(AppMsg::ConvertXCursorOnly);
-                        }
-                        KeyCode::Char('p') => {
-                            let _ = self.tx.send(AppMsg::ConvertPNGOnly);
-                        }
-                        _ => {
-                            self.runner.update(&msg);
-                        }
-                    },
-                    Focus::Overrides => {
-                        if let Some(response) = self.theme_overrides.update(&msg) {
-                            let _ = self.tx.send(response);
-                        }
-                    }
-                    Focus::Editor => {
-                        if let Some(response) = self.cursor_editor.update(&msg) {
-                            let _ = self.tx.send(response);
-                        }
-                    }
-                    Focus::Logs => {
-                        self.logs.update(&msg);
-                    }
-                    Focus::Settings => {
-                        if let Some(response) = self.settings.update(&msg) {
-                            let _ = self.tx.send(response);
-                        }
-                    }
-                    Focus::Mapping => {
-                        if let Some(response) = self.mapping_editor.update(&msg) {
-                            let _ = self.tx.send(response);
-                        }
-                    }
-                }
-            }
-        }
-        false
+    pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+        keymap::handle_key(self, key)
     }
 }
 
-fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> anyhow::Result<()> {
+fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     terminal.show_cursor().ok();
     disable_raw_mode().ok();
     let mut out = io::stdout();
     execute!(out, LeaveAlternateScreen)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_load_in_file_browser_uses_selected_input_dir() {
+        let picker = ratatui_image::picker::Picker::halfblocks();
+        let mut app = App::new_with_picker(picker);
+
+        // Simulate user already having an input directory set
+        let custom_dir = PathBuf::from("/custom/input/dir");
+        app.runner.set_input_dir(custom_dir.clone());
+
+        // File browser is in some other directory
+        let other_dir = PathBuf::from("/different/browser/dir");
+        app.file_browser.current_dir = other_dir;
+        app.focus = Focus::FileBrowser;
+
+        // Press 'l' in FileBrowser
+        let key = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
+        app.handle_key(key);
+
+        // Check the message sent on channel: must be CursorSelected with custom_dir
+        let mut found_cursor_selected = None;
+        while let Ok(msg) = app.rx.try_recv() {
+            if let AppMsg::CursorSelected(dir) = msg {
+                found_cursor_selected = Some(dir);
+                break;
+            }
+        }
+        assert_eq!(found_cursor_selected, Some(custom_dir));
+    }
+
+    #[test]
+    fn test_load_in_file_browser_falls_back_to_browser_dir_when_none_selected() {
+        let picker = ratatui_image::picker::Picker::halfblocks();
+        let mut app = App::new_with_picker(picker);
+
+        app.runner.input_dir = None;
+        let browser_dir = PathBuf::from("/my/browser/dir");
+        app.file_browser.current_dir = browser_dir.clone();
+        app.focus = Focus::FileBrowser;
+
+        let key = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
+        app.handle_key(key);
+
+        let mut found_cursor_selected = None;
+        while let Ok(msg) = app.rx.try_recv() {
+            if let AppMsg::CursorSelected(dir) = msg {
+                found_cursor_selected = Some(dir);
+                break;
+            }
+        }
+        assert_eq!(found_cursor_selected, Some(browser_dir));
+    }
 }
