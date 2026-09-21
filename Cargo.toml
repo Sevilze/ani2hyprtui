@@ -1,6 +1,6 @@
 [package]
 name = "ani2hyprtui"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 description = "A TUI tool to convert animated cursors to Hyprcursor format"
 repository = "https://github.com/Sevilze/ani2hyprtui"
@@ -38,7 +38,7 @@ dirs = "7"
 image = "0.25"
 imageproc = "0.27"
 ratatui = { version = "0.30", features = ["all-widgets"] }
-ratatui-image = { version = "10.0", default-features = false, features = [
+ratatui-image = { version = "11.1", default-features = false, features = [
   "image-defaults",
   "crossterm"
 ] }

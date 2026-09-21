@@ -247,7 +247,8 @@ impl PreviewState {
         let image_area = Self::center_image_rect(chunks[0]);
 
         let (font_w, font_h) = if let Ok(picker) = self.picker.lock() {
-            picker.font_size()
+            let font_size = picker.font_size();
+            (font_size.width, font_size.height)
         } else {
             (8, 16)
         };
