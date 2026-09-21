@@ -30,6 +30,9 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
 
+      - name: Build release binary
+        run: cargo build --release --verbose
+
   pkgbuild:
     name: Verify PKGBUILD
     runs-on: ubuntu-latest
