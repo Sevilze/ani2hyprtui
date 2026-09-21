@@ -16,17 +16,17 @@ fn scan_cursor_dir(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut cursor_files = Vec::new();
     let cursors_dir = dir.join("cursors");
 
-    if !cursors_dir.exists() {
-        // Try the directory itself if no cursors subdirectory
-        for entry in WalkDir::new(dir).max_depth(1) {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() && (is_likely_cursor_file(path) || is_windows_cursor_file(path)) {
-                cursor_files.push(path.to_path_buf());
-            }
+    // Always check the main directory
+    for entry in WalkDir::new(dir).max_depth(1) {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() && (is_likely_cursor_file(path) || is_windows_cursor_file(path)) {
+            cursor_files.push(path.to_path_buf());
         }
-    } else {
-        // Scan cursors subdirectory
+    }
+
+    // Also check cursors subdirectory if it exists
+    if cursors_dir.exists() {
         for entry in WalkDir::new(&cursors_dir).max_depth(1) {
             let entry = entry?;
             let path = entry.path();
@@ -99,7 +99,11 @@ fn parse_windows_cursor_file(path: &Path) -> Result<Vec<CursorFrame>> {
     }
 }
 
-fn convert_windows_cursor_to_meta(path: &Path, frames: Vec<CursorFrame>) -> CursorMeta {
+fn convert_windows_cursor_to_meta(
+    path: &Path,
+    frames: Vec<CursorFrame>,
+    cache_dir: &Path,
+) -> CursorMeta {
     let x11_name = path
         .file_stem()
         .and_then(|n| n.to_str())
@@ -118,7 +122,8 @@ fn convert_windows_cursor_to_meta(path: &Path, frames: Vec<CursorFrame>) -> Curs
         }
     }
 
-    // convert to SizeVariants
+    // save frame images to cache dir and build SizeVariants
+    let stem = x11_name.clone();
     let mut variants: Vec<SizeVariant> = size_map
         .into_iter()
         .map(|(size, indices)| {
@@ -127,14 +132,36 @@ fn convert_windows_cursor_to_meta(path: &Path, frames: Vec<CursorFrame>) -> Curs
             let first_img = &frames[first_frame_idx].images[first_img_idx];
             let hotspot = first_img.hotspot;
 
-            // create frames for this size variant
+            // create frames for this size variant, saving each image as PNG
             let frame_list: Vec<Frame> = frames
                 .iter()
-                .map(|frame| {
+                .enumerate()
+                .map(|(frame_idx, frame)| {
                     let delay = frame.delay;
-                    Frame {
-                        png_path: PathBuf::new(), // will be populated when extracted
-                        delay_ms: delay,
+                    // pick the image matching this size from the frame, or fall back to first
+                    let img = frame
+                        .images
+                        .iter()
+                        .find(|i| i.nominal_size == size)
+                        .or(frame.images.first());
+
+                    match img {
+                        Some(img_data) => {
+                            let png_path = cache_dir.join(format!(
+                                "{}_{}_{}.png",
+                                stem, size, frame_idx
+                            ));
+                            // save the image to disk
+                            let _ = img_data.image.save(&png_path);
+                            Frame {
+                                png_path,
+                                delay_ms: delay,
+                            }
+                        }
+                        None => Frame {
+                            png_path: PathBuf::new(),
+                            delay_ms: delay,
+                        },
                     }
                 })
                 .collect();
@@ -214,11 +241,16 @@ pub fn load_cursor_folder(dir: &Path) -> Result<Vec<CursorMeta>> {
     let cursor_files = scan_cursor_dir(dir)?;
     let mut cursors = Vec::new();
 
+    // Create a temp cache dir for .ani frame PNGs (needed for preview)
+    let cache_dir = std::env::temp_dir().join("ani2hyprtui_preview_cache");
+    let _ = fs::create_dir_all(&cache_dir);
+
     for path in cursor_files {
         if is_windows_cursor_file(&path) {
             match parse_windows_cursor_file(&path) {
                 Ok(frames) => {
-                    let meta = convert_windows_cursor_to_meta(&path, frames);
+                    let meta =
+                        convert_windows_cursor_to_meta(&path, frames, &cache_dir);
                     cursors.push(meta);
                 }
                 Err(e) => {

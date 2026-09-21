@@ -25,6 +25,7 @@ impl fmt::Display for IndexTheme {
             writeln!(f, "[{}]", dir)?;
             writeln!(f, "Context=Cursors")?;
             writeln!(f, "Type=Fixed")?;
+            writeln!(f, "Size=48")?;
             writeln!(f)?;
         }
 
@@ -47,6 +48,10 @@ impl fmt::Display for CursorTheme {
         if !self.inherits.is_empty() {
             writeln!(f, "Inherits={}", self.inherits)?;
         }
+        writeln!(f)?;
+        writeln!(f, "[Xcursor]")?;
+        writeln!(f, "Xcursor.theme={}", self.name)?;
+        writeln!(f, "Xcursor.size=48")?;
         Ok(())
     }
 }

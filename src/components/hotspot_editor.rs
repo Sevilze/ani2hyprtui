@@ -157,8 +157,6 @@ impl HotspotEditorState {
             if variant.hotspot != (hx, hy) {
                 variant.hotspot = (hx, hy);
                 self.modified_hotspots.insert(cursor.x11_name.clone());
-                // Only invalidate protocol cache
-                self.preview.invalidate_protocol_for_variant(variant);
             }
         }
     }
