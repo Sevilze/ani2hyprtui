@@ -124,6 +124,10 @@ fn convert_windows_cursor_to_meta(
 
     // save frame images to cache dir and build SizeVariants
     let stem = x11_name.clone();
+    let cursor_dir = cache_dir.join(&stem);
+    let _ = fs::create_dir_all(&cursor_dir);
+
+    let mut conf_lines = Vec::new();
     let mut variants: Vec<SizeVariant> = size_map
         .into_iter()
         .map(|(size, indices)| {
@@ -147,12 +151,14 @@ fn convert_windows_cursor_to_meta(
 
                     match img {
                         Some(img_data) => {
-                            let png_path = cache_dir.join(format!(
-                                "{}_{}_{}.png",
-                                stem, size, frame_idx
-                            ));
+                            let filename = format!("{}_{}_{}.png", stem, size, frame_idx);
+                            let png_path = cursor_dir.join(&filename);
                             // save the image to disk
                             let _ = img_data.image.save(&png_path);
+                            conf_lines.push(format!(
+                                "{} {} {} {} {}\n",
+                                size, hotspot.0, hotspot.1, filename, delay
+                            ));
                             Frame {
                                 png_path,
                                 delay_ms: delay,
@@ -173,6 +179,14 @@ fn convert_windows_cursor_to_meta(
             }
         })
         .collect();
+
+    let conf_path = cursor_dir.join(format!("{}.conf", stem));
+    if let Ok(mut file) = fs::File::create(&conf_path) {
+        use std::io::Write;
+        for line in &conf_lines {
+            let _ = file.write_all(line.as_bytes());
+        }
+    }
 
     // sort variants by size
     variants.sort_by_key(|v| v.size);
@@ -237,20 +251,17 @@ fn convert_to_cursor_meta(path: &Path, images: Vec<Image>) -> CursorMeta {
 }
 
 /// load all cursor files from a directory
-pub fn load_cursor_folder(dir: &Path) -> Result<Vec<CursorMeta>> {
+pub fn load_cursor_folder(dir: &Path, cache_dir: &Path) -> Result<Vec<CursorMeta>> {
     let cursor_files = scan_cursor_dir(dir)?;
     let mut cursors = Vec::new();
 
-    // Create a temp cache dir for .ani frame PNGs (needed for preview)
-    let cache_dir = std::env::temp_dir().join("ani2hyprtui_preview_cache");
-    let _ = fs::create_dir_all(&cache_dir);
+    let _ = fs::create_dir_all(cache_dir);
 
     for path in cursor_files {
         if is_windows_cursor_file(&path) {
             match parse_windows_cursor_file(&path) {
                 Ok(frames) => {
-                    let meta =
-                        convert_windows_cursor_to_meta(&path, frames, &cache_dir);
+                    let meta = convert_windows_cursor_to_meta(&path, frames, cache_dir);
                     cursors.push(meta);
                 }
                 Err(e) => {
@@ -387,4 +398,89 @@ pub fn load_cursor_folder_from_pngs(dir: &Path) -> Result<Vec<CursorMeta>> {
     }
 
     Ok(cursors)
+}
+
+/// Ensure that a cursor has a variant for `target_size`, generating and saving
+/// resized PNG frames and updating the cursor's .conf file if needed.
+pub fn ensure_variant_for_size(
+    cursor: &mut crate::model::cursor::CursorMeta,
+    target_size: u32,
+    png_intermediate: Option<&Path>,
+) {
+    if cursor.variants.iter().any(|v| v.size == target_size) {
+        return;
+    }
+
+    if let Some(source) = cursor.variants.iter().max_by_key(|v| v.size).cloned() {
+        let src_size = source.size;
+        if src_size == 0 {
+            return;
+        }
+
+        let scale = target_size as f32 / src_size as f32;
+        let new_hotspot = (
+            (source.hotspot.0 as f32 * scale).round() as u32,
+            (source.hotspot.1 as f32 * scale).round() as u32,
+        );
+
+        // Reuse existing png_intermediate/<cursor> directory if it exists
+        let dest_dir = source
+            .frames
+            .first()
+            .and_then(|f| f.png_path.parent())
+            .filter(|p| p.exists() && p.is_dir())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| {
+                let base = png_intermediate.unwrap_or_else(|| Path::new("./out/png_intermediate"));
+                let p = base.join(&cursor.x11_name);
+                let _ = fs::create_dir_all(&p);
+                p
+            });
+
+        let mut new_frames = Vec::new();
+        let mut conf_lines = Vec::new();
+
+        for (frame_idx, frame) in source.frames.iter().enumerate() {
+            let filename = format!("{}_{}_{}.png", cursor.x11_name, target_size, frame_idx);
+            let png_path = dest_dir.join(&filename);
+
+            if let Ok(img) = image::open(&frame.png_path) {
+                let scaled = image::imageops::resize(
+                    &img,
+                    target_size,
+                    target_size,
+                    image::imageops::FilterType::Lanczos3,
+                );
+                let _ = scaled.save(&png_path);
+            }
+
+            conf_lines.push(format!(
+                "{} {} {} {} {}\n",
+                target_size, new_hotspot.0, new_hotspot.1, filename, frame.delay_ms
+            ));
+
+            new_frames.push(crate::model::cursor::Frame {
+                png_path,
+                delay_ms: frame.delay_ms,
+            });
+        }
+
+        // If .conf file exists in dest_dir (as in png_intermediate), append new size entries
+        let conf_path = dest_dir.join(format!("{}.conf", cursor.x11_name));
+        if conf_path.exists()
+            && let Ok(mut file) = fs::OpenOptions::new().append(true).open(&conf_path)
+        {
+            use std::io::Write;
+            for line in conf_lines {
+                let _ = file.write_all(line.as_bytes());
+            }
+        }
+
+        cursor.variants.push(crate::model::cursor::SizeVariant {
+            size: target_size,
+            frames: new_frames,
+            hotspot: new_hotspot,
+        });
+        cursor.variants.sort_by_key(|v| v.size);
+    }
 }

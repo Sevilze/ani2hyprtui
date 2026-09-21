@@ -28,6 +28,7 @@ impl Default for ThemeOverridesState {
         selected_sizes.insert(24);
         selected_sizes.insert(32);
         selected_sizes.insert(48);
+        selected_sizes.insert(64);
 
         let mut list_state = ListState::default();
         list_state.select(Some(0));
@@ -51,34 +52,42 @@ impl Component for ThemeOverridesState {
                         self.selector_index -= 1;
                         self.list_state.select(Some(self.selector_index));
                     }
+                    None
                 }
                 KeyCode::Down => {
                     if self.selector_index < self.available_sizes.len() - 1 {
                         self.selector_index += 1;
                         self.list_state.select(Some(self.selector_index));
                     }
+                    None
                 }
                 KeyCode::Enter => {
                     let size = self.available_sizes[self.selector_index];
-                    if self.selected_sizes.contains(&size) {
+                    let added = if self.selected_sizes.contains(&size) {
                         self.selected_sizes.remove(&size);
+                        false
                     } else {
                         self.selected_sizes.insert(size);
-                    }
+                        true
+                    };
+                    Some(AppMsg::ThemeSizeToggled { size, added })
                 }
                 KeyCode::Char(c) => {
                     // Allow alphanumeric, dash, underscore, and space
                     if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
                         self.output_name.push(c);
                     }
+                    None
                 }
                 KeyCode::Backspace => {
                     self.output_name.pop();
+                    None
                 }
-                _ => {}
+                _ => None,
             }
+        } else {
+            None
         }
-        None
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, is_focused: bool) {

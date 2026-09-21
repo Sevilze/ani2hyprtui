@@ -13,7 +13,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{io, thread, time::Duration};
 
 use crate::components::{
@@ -24,7 +24,9 @@ use crate::components::{
 use crate::config::Config;
 use crate::event::AppMsg;
 use crate::model::cursor;
-use crate::pipeline::cursor_io::{load_cursor_folder, load_cursor_folder_from_pngs};
+use crate::pipeline::cursor_io::{
+    ensure_variant_for_size, load_cursor_folder, load_cursor_folder_from_pngs,
+};
 use crate::pipeline::worker::PipelineWorker;
 use crate::widgets::theme::get_theme;
 
@@ -282,7 +284,9 @@ impl App {
                         Focus::FileBrowser => "i/o: Set In/Out | Enter: Select | l: Load",
                         Focus::Runner => "c: Full Convert | x: XCur | p: PNG",
                         Focus::Overrides => "Tab: Switch Field | Type to edit",
-                        Focus::Editor => "Space: Play | ,/.: Frame | Arrows: Hotspot | S: Save",
+                        Focus::Editor => {
+                            "Space: Play | ,/.: Frame | [/]: Size | Arrows: Hotspot | S: Save"
+                        }
                         Focus::Logs => "Logs View",
                         Focus::Settings => "↑↓/jk: Select | Enter: Apply | ←→/hl: Quick Switch",
                         Focus::Mapping => "Enter: Edit | s: Save",
@@ -369,6 +373,18 @@ impl App {
                     } else {
                         count.to_string()
                     }
+                )));
+            }
+            AppMsg::ThemeSizeToggled { size, added } => {
+                if *added {
+                    self.cursor_editor.add_size_variant(*size);
+                } else {
+                    self.cursor_editor.remove_size_variant(*size);
+                }
+                let _ = self.tx.send(AppMsg::LogMessage(format!(
+                    "Theme size {} {}",
+                    size,
+                    if *added { "enabled" } else { "disabled" }
                 )));
             }
             AppMsg::ErrorOccurred(err) => {
@@ -626,11 +642,18 @@ impl App {
             path.display()
         )));
 
+        let output_dir = self
+            .runner
+            .output_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("./out"));
+        let png_intermediate = output_dir.join("png_intermediate");
+
         let cursors = load_cursor_folder_from_pngs(path)
             .ok()
             .filter(|v| !v.is_empty())
             .map(Ok)
-            .unwrap_or_else(|| load_cursor_folder(path));
+            .unwrap_or_else(|| load_cursor_folder(path, &png_intermediate));
 
         match cursors {
             Ok(cursors) => {
@@ -667,6 +690,20 @@ impl App {
                     })
                     .collect();
 
+                let _ = std::fs::create_dir_all(&png_intermediate);
+                let selected_sizes: Vec<u32> = self
+                    .theme_overrides
+                    .selected_sizes
+                    .iter()
+                    .copied()
+                    .collect();
+
+                for cursor in &mut converted_cursors {
+                    for &target_size in &selected_sizes {
+                        ensure_variant_for_size(cursor, target_size, Some(&png_intermediate));
+                    }
+                }
+
                 converted_cursors.sort_by(|a, b| a.x11_name.cmp(&b.x11_name));
 
                 if !converted_cursors.is_empty() {
@@ -692,7 +729,7 @@ impl App {
 
     fn update_components(&mut self, msg: &AppMsg) {
         match msg {
-            AppMsg::Key(_) => {}
+            AppMsg::Key(_) | AppMsg::ThemeSizeToggled { .. } => {}
             _ => {
                 self.file_browser.update(msg);
                 self.cursor_editor.update(msg);
@@ -813,7 +850,9 @@ impl App {
                         }
                     },
                     Focus::Overrides => {
-                        self.theme_overrides.update(&msg);
+                        if let Some(response) = self.theme_overrides.update(&msg) {
+                            let _ = self.tx.send(response);
+                        }
                     }
                     Focus::Editor => {
                         if let Some(response) = self.cursor_editor.update(&msg) {

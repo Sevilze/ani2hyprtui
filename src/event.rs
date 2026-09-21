@@ -21,6 +21,9 @@ pub enum AppMsg {
     MappingSaved,
     HotspotsSaved(Vec<String>),
 
+    // Theme overrides
+    ThemeSizeToggled { size: u32, added: bool },
+
     // Pipeline control
     PipelineStarted,
     ConvertXCursorOnly,

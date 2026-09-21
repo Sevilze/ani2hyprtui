@@ -2,6 +2,7 @@ use super::Component;
 use super::preview::PreviewState;
 use crate::event::AppMsg;
 use crate::model::cursor::CursorMeta;
+use crate::pipeline::cursor_io::ensure_variant_for_size;
 use crate::widgets::common::focused_block;
 use crate::widgets::theme::get_theme;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -143,6 +144,85 @@ impl HotspotEditorState {
             self.frame_ix = 0;
             self.reset_animation_timer();
         }
+    }
+
+    pub fn add_size_variant(&mut self, target_size: u32) {
+        let current_viewed_size = self
+            .cursors
+            .get(self.selected_cursor)
+            .and_then(|c| c.variants.get(self.selected_variant))
+            .map(|v| v.size);
+
+        for cursor in &mut self.cursors {
+            ensure_variant_for_size(cursor, target_size, None);
+        }
+
+        if let Some(cursor) = self.cursors.get(self.selected_cursor) {
+            if let Some(size) = current_viewed_size
+                && let Some(idx) = cursor.variants.iter().position(|v| v.size == size)
+            {
+                self.selected_variant = idx;
+            } else {
+                self.selected_variant = self
+                    .selected_variant
+                    .min(cursor.variants.len().saturating_sub(1));
+            }
+        }
+    }
+
+    pub fn remove_size_variant(&mut self, target_size: u32) {
+        let current_viewed_size = self
+            .cursors
+            .get(self.selected_cursor)
+            .and_then(|c| c.variants.get(self.selected_variant))
+            .map(|v| v.size);
+
+        for cursor in &mut self.cursors {
+            if cursor.variants.len() > 1 {
+                if let Some(variant) = cursor.variants.iter().find(|v| v.size == target_size) {
+                    for frame in &variant.frames {
+                        let _ = std::fs::remove_file(&frame.png_path);
+                    }
+                    if let Some(first_frame) = variant.frames.first()
+                        && let Some(parent) = first_frame.png_path.parent()
+                    {
+                        let conf_path = parent.join(format!("{}.conf", cursor.x11_name));
+                        if conf_path.exists()
+                            && let Ok(content) = std::fs::read_to_string(&conf_path)
+                        {
+                            let filtered: Vec<&str> = content
+                                .lines()
+                                .filter(|line| {
+                                    let parts: Vec<&str> = line.split_whitespace().collect();
+                                    parts.first().and_then(|s| s.parse::<u32>().ok())
+                                        != Some(target_size)
+                                })
+                                .collect();
+                            let mut new_content = filtered.join("\n");
+                            if !new_content.is_empty() {
+                                new_content.push('\n');
+                            }
+                            let _ = std::fs::write(&conf_path, new_content);
+                        }
+                    }
+                }
+                cursor.variants.retain(|v| v.size != target_size);
+            }
+        }
+
+        if let Some(cursor) = self.cursors.get(self.selected_cursor) {
+            if let Some(size) = current_viewed_size
+                && size != target_size
+                && let Some(idx) = cursor.variants.iter().position(|v| v.size == size)
+            {
+                self.selected_variant = idx;
+            } else {
+                self.selected_variant = self
+                    .selected_variant
+                    .min(cursor.variants.len().saturating_sub(1));
+            }
+        }
+        self.preview.clear_cache();
     }
 
     fn move_hotspot(&mut self, dx: i32, dy: i32) {
@@ -354,6 +434,7 @@ impl Component for HotspotEditorState {
 
                 None
             }
+            AppMsg::ThemeSizeToggled { .. } => None,
             AppMsg::Key(key) => self.handle_key(*key),
             _ => None,
         }

@@ -150,7 +150,7 @@ The Theme Overrides component allows you to customize the output configuration b
 **Features:**
 
 * **Output Name**: Specify a custom name for the generated theme (defaults to the input folder name).
-* **Sizes**: Select which cursor sizes to generate (e.g., 24, 32, 48).
+* **Sizes**: Select which cursor sizes to generate (defaults to 24, 32, 48, 64).
 
 **Controls:**
 
@@ -193,8 +193,9 @@ The Hotspot Editor is a powerful tool for visually adjusting the "hotspot" (the 
 * **Navigation**:
   * `j` / `k`: Select next/previous cursor in the list.
   * `[` / `]`: Cycle through different size variants (e.g., 32x32, 48x48).
-* **Animation**:
+* **Animation & View**:
   * `Space`: Play/Pause animation.
+  * `Ctrl+Space`: Toggle maximize preview.
   * `.` (Period): Step forward one frame.
   * `,` (Comma): Step backward one frame.
 * **Editing**:
