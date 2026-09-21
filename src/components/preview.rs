@@ -144,10 +144,10 @@ impl PreviewState {
     fn ensure_base_cached(&mut self, path: &str, target_size: (u32, u32)) {
         let base_key = Self::base_key(path, target_size);
 
-        if !self.base_cache.contains_key(&base_key) {
-            if let Some(base_data) = Self::process_base_image(path, target_size) {
-                self.base_cache.insert(base_key.clone(), base_data);
-            }
+        if !self.base_cache.contains_key(&base_key)
+            && let Some(base_data) = Self::process_base_image(path, target_size)
+        {
+            self.base_cache.insert(base_key.clone(), base_data);
         }
     }
 

@@ -21,15 +21,23 @@ pub fn to_x11(frames: &[CursorFrame]) -> Result<Vec<u8>> {
 
             // Resize image to match its nominal size if they differ
             // This ensures consistent sizing between xcursor and hyprcursor outputs
-            let image = if actual_w != nominal || actual_h != nominal {
-                image::imageops::resize(&cursor.image, nominal, nominal, FilterType::Lanczos3)
+            let (image, hotspot_x, hotspot_y) = if (actual_w != nominal || actual_h != nominal)
+                && actual_w > 0
+                && actual_h > 0
+            {
+                let scale_x = nominal as f32 / actual_w as f32;
+                let scale_y = nominal as f32 / actual_h as f32;
+                (
+                    image::imageops::resize(&cursor.image, nominal, nominal, FilterType::Lanczos3),
+                    (cursor.hotspot.0 as f32 * scale_x).round() as u16,
+                    (cursor.hotspot.1 as f32 * scale_y).round() as u16,
+                )
             } else {
-                cursor.image.clone()
+                (cursor.image.clone(), cursor.hotspot.0, cursor.hotspot.1)
             };
 
             let width = image.width();
             let height = image.height();
-            let (hotspot_x, hotspot_y) = cursor.hotspot;
             let delay = frame.delay;
 
             let pixels = premultiply_alpha(&image);
@@ -169,5 +177,53 @@ mod tests {
 
         let version = u32::from_le_bytes([result[8], result[9], result[10], result[11]]);
         assert_eq!(version, 0x0001_0000);
+    }
+
+    #[test]
+    fn test_xcursor_resizes_and_scales_hotspot() {
+        let img = RgbaImage::new(64, 64);
+        let cursor = CursorImage {
+            image: img,
+            hotspot: (32, 32),
+            nominal_size: 32,
+        };
+
+        let frame = CursorFrame {
+            images: vec![cursor],
+            delay: 0,
+        };
+
+        let result = to_x11(&[frame]).unwrap();
+        // Offset for first chunk header: 16 (header) + 12 (TOC) = 28
+        let chunk_offset = 28;
+        let width = u32::from_le_bytes([
+            result[chunk_offset + 16],
+            result[chunk_offset + 17],
+            result[chunk_offset + 18],
+            result[chunk_offset + 19],
+        ]);
+        let height = u32::from_le_bytes([
+            result[chunk_offset + 20],
+            result[chunk_offset + 21],
+            result[chunk_offset + 22],
+            result[chunk_offset + 23],
+        ]);
+        let hotspot_x = u32::from_le_bytes([
+            result[chunk_offset + 24],
+            result[chunk_offset + 25],
+            result[chunk_offset + 26],
+            result[chunk_offset + 27],
+        ]);
+        let hotspot_y = u32::from_le_bytes([
+            result[chunk_offset + 28],
+            result[chunk_offset + 29],
+            result[chunk_offset + 30],
+            result[chunk_offset + 31],
+        ]);
+
+        assert_eq!(width, 32);
+        assert_eq!(height, 32);
+        assert_eq!(hotspot_x, 16);
+        assert_eq!(hotspot_y, 16);
     }
 }

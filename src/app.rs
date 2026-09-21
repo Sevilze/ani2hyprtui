@@ -559,19 +559,29 @@ impl App {
 
                 // Populate mapping editor with available cursor files
                 let mut sources = Vec::new();
-                if let Ok(entries) = std::fs::read_dir(path) {
-                    for entry in entries.flatten() {
-                        let entry_path = entry.path();
-                        if let Some(ext) = entry_path.extension() {
-                            let ext_str = ext.to_string_lossy().to_lowercase();
-                            if (ext_str == "ani" || ext_str == "cur")
-                                && let Some(stem) = entry_path.file_stem()
-                            {
-                                sources.push(stem.to_string_lossy().to_string());
+                let mut scan_dirs = vec![path.clone()];
+                let nested_cursors = path.join("cursors");
+                if nested_cursors.is_dir() {
+                    scan_dirs.push(nested_cursors);
+                }
+
+                for scan_dir in scan_dirs {
+                    if let Ok(entries) = std::fs::read_dir(scan_dir) {
+                        for entry in entries.flatten() {
+                            let entry_path = entry.path();
+                            if let Some(ext) = entry_path.extension() {
+                                let ext_str = ext.to_string_lossy().to_lowercase();
+                                if (ext_str == "ani" || ext_str == "cur")
+                                    && let Some(stem) = entry_path.file_stem()
+                                {
+                                    sources.push(stem.to_string_lossy().to_string());
+                                }
                             }
                         }
                     }
                 }
+                sources.sort();
+                sources.dedup();
                 self.mapping_editor
                     .set_available_sources(sources, &self.tx);
 

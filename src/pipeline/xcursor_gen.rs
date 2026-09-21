@@ -32,11 +32,12 @@ impl XCursorThemeBuilder {
         fs::create_dir_all(&cursors_dir)?;
 
         // Collect available files for prefix matching
-        let available_files: Vec<PathBuf> = fs::read_dir(xcur_source_dir)?
+        let mut available_files: Vec<PathBuf> = fs::read_dir(xcur_source_dir)?
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
             .map(|e| e.path())
             .collect();
+        available_files.sort();
 
         let mut count = 0;
 
