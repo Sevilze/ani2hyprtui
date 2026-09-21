@@ -1,0 +1,39 @@
+name: Rebase Dependabot PRs
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
+    steps:
+      - name: Rebase all Dependabot PRs
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PAT_TOKEN }}
+          script: |
+            const { data: pulls } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open'
+            });
+
+            for (const pr of pulls) {
+              if (pr.user.login === 'dependabot[bot]') {
+                console.log(`Requesting rebase for PR #${pr.number}: ${pr.title}`);
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  body: '@dependabot rebase'
+                });
+              }
+            }
