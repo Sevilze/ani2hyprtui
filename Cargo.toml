@@ -34,7 +34,7 @@ anyhow = "1"
 byteorder = "1"
 crossbeam-channel = "0.5"
 crossterm = "0.29"
-dirs = "6"
+dirs = "7"
 image = "0.25"
 imageproc = "0.27"
 ratatui = { version = "0.30", features = ["all-widgets"] }
